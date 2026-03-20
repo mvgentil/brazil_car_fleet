@@ -64,5 +64,5 @@ uv run src/load.py --year 2026
 
 | Dado | Fonte | URL |
 |------|-------|-----|
-| Frota por combustível | Senatran | `gov.br/transportes/.../frota-de-veiculos-{ano}` |
-| Municípios | Receita Federal | `gov.br/receitafederal/dados/municipios.csv` |
+| Frota por combustível | Senatran | `https://www.gov.br/transportes/pt-br/assuntos/transito/conteudo-Senatran/frota-de-veiculos-{ano}` |
+| Municípios | Receita Federal | `https://www.gov.br/receitafederal/dados/municipios.csv` |
