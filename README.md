@@ -25,8 +25,8 @@ Pipeline de dados da **frota de veículos por combustível e município** do Bra
 | Tabela | Descrição |
 |--------|-----------|
 | `silver.dim_municipio` | Municípios enriquecidos com código IBGE, região e UF (join RFB + seed `uf_regiao`, normalização de acentos) |
-| `silver.dim_data` | *(planejada)* — Extraída do `nm_file` com mês/ano |
-| `silver.dim_combustivel` | *(planejada)* — 29 tipos agrupados em 6 categorias (Elétrico, Híbrido, Flex, etc.) |
+| `silver.dim_data` | Extraída do `nm_file` com mês/ano |
+| `silver.dim_combustivel` | 29 tipos agrupados em 6 categorias (Elétrico, Híbrido, Flex, etc.) |
 | `silver.fato_frota` | *(planejada)* — Granularidade: município × combustível × mês/ano |
 
 ### Camada Gold (dados analíticos)
@@ -46,7 +46,15 @@ brazil_car_fleet (catalog)
 │   ├── brazil_car_fleet
 │   └── rfb_municipios
 ├── silver (schema)
-│   └── dim_municipio
+│   ├── dim_municipio
+│   ├── dim_data
+│   ├── dim_combustivel
+│   └── fato_frota
+├── gold (schema)
+│   ├── frota_eletrica_e_hibrida_evolucao
+│   ├── frota_por_grupo_combustivel_regiao
+│   ├── frota_qualidade_dados
+│   └── frota_municipio_ranking
 ├── raw_data (volume)
 │   ├── fleet_raw/*.csv
 │   └── rfb_municipios_raw/municipios.csv
@@ -64,6 +72,9 @@ notebooks/
 ├── 01_bronze_brazil_car_fleet.ipynb   # Ingestão dos CSVs no catálogo Bronze
 ├── 01_bronze_rfb_municipios.ipynb     # Ingestão do CSV de municípios (RFB)
 └── 02_silver_dim_municipio.ipynb      # Construção da dim_municipio com joins e normalização
+└── 02_silver_dim_data.ipynb           # Construção da dim_data com extração do nm_file
+└── 02_silver_dim_combustivel.ipynb    # Construção da dim_combustivel com agrupamento dos 29 tipos
+└── 02_silver_fato_frota.ipynb         # Construção da fato_frota com granularidade município × combustível × mês/ano
 
 data/
 ├── raw/{ano}/              # Arquivos .xlsx originais agrupados por ano
@@ -121,6 +132,9 @@ uv run src/load.py --year 2026
    - `01_bronze_brazil_car_fleet` — cria tabela Bronze da frota
    - `01_bronze_rfb_municipios` — cria tabela Bronze dos municípios
    - `02_silver_dim_municipio` — constrói a dimensão de municípios na Silver
+   - `02_silver_dim_data` — constrói a dimensão de datas na Silver
+   - `02_silver_dim_combustivel` — constrói a dimensão de combustíveis na Silver
+   - `02_silver_fato_frota` — constrói a fato de frota na Silver
 
 ## Fonte dos dados
 
