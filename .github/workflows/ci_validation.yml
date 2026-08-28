@@ -35,6 +35,10 @@ jobs:
         uses: databricks/setup-cli@main
 
       - name: Validar Bundle em Dev e Prod (Sintaxe & Schemas)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: |
           cd databricks
           databricks bundle validate --target dev
