@@ -7,10 +7,19 @@ on:
   # Permite disparo manual pelo painel do GitHub Actions
   workflow_dispatch:
     inputs:
-      years:
-        description: 'Anos a extrair e carregar (ex: 2026 ou "2024 2025 2026")'
+      year:
+        description: 'Ano a processar (ex: 2026)'
         required: false
         default: '2026'
+      month:
+        description: 'Mês específico (1 a 12). Deixe em branco para carregar o ano todo.'
+        required: false
+        default: ''
+      previous_month:
+        description: 'Executar carga do mês anterior automaticamente (true/false)'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   ingest-and-load:
@@ -46,10 +55,16 @@ jobs:
           DATABRICKS_FLEET_VOLUME: ${{ secrets.DATABRICKS_FLEET_VOLUME || 'fleet_raw' }}
         run: |
           cd ingestion
-          if [ -n "${{ github.event.inputs.years }}" ]; then
-            echo "Executando backfill para o(s) ano(s): ${{ github.event.inputs.years }}"
-            uv run src/load.py --year ${{ github.event.inputs.years }}
-          else
+          if [ "${{ github.event.inputs.previous_month }}" = "true" ]; then
             echo "Executando carga incremental do mês anterior..."
+            uv run src/load.py --previous-month
+          elif [ -n "${{ github.event.inputs.month }}" ]; then
+            echo "Executando carga para Ano ${{ github.event.inputs.year }}, Mês ${{ github.event.inputs.month }}..."
+            uv run src/load.py --year ${{ github.event.inputs.year }} --month ${{ github.event.inputs.month }}
+          elif [ -n "${{ github.event.inputs.year }}" ]; then
+            echo "Executando carga para o ano completo: ${{ github.event.inputs.year }}"
+            uv run src/load.py --year ${{ github.event.inputs.year }}
+          else
+            echo "Executando carga padrão (mês anterior)..."
             uv run src/load.py --previous-month
           fi
