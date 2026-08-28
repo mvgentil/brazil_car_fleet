@@ -4,7 +4,7 @@ bundle:
 variables:
   catalog:
     description: "Unity Catalog catalog name"
-    default: brazil_car_fleet
+    default: brazil_car_fleet_dev
   raw_schema:
     description: "Schema onde os Volumes raw estão criados"
     default: raw_data
@@ -25,11 +25,15 @@ targets:
   dev:
     mode: development
     default: true
+    variables:
+      catalog: brazil_car_fleet_dev
 
   prod:
     mode: production
     workspace:
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      catalog: brazil_car_fleet
 
 include:
   - resources/*.yml

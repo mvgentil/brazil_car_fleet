@@ -141,7 +141,9 @@ brazil_car_fleet (catalog)
 frota-veiculos-brasil/
 ├── .github/
 │   └── workflows/
-│       └── ingestion_monthly.yml    # Pipeline CI/CD agendado no GitHub Actions
+│       ├── ci_validation.yml        # Validação de código e bundles em PRs
+│       ├── deploy_prod.yml          # Deploy contínuo em Produção no merge na main
+│       └── ingestion_monthly.yml    # Ingestão agendada (dia 15) via Service Principal
 │
 ├── ingestion/                       # Módulo Python de Ingestão e Validação
 │   ├── Dockerfile                   # Imagem Docker leve com Python 3.13 + Astral uv
@@ -298,7 +300,7 @@ Cadastre em **Settings ➔ Secrets and variables ➔ Actions**:
 | Secret | Descrição | Exemplo |
 |---|---|---|
 | `DATABRICKS_HOST` | URL do workspace Databricks | `https://dbc-xxxx.cloud.databricks.com/` |
-| `DATABRICKS_CLIENT_ID` | Application ID do Service Principal | `a5b53550-fe1d-4c12-9106-970b7a7d9f8c` |
+| `DATABRICKS_CLIENT_ID` | Application ID do Service Principal | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
 | `DATABRICKS_CLIENT_SECRET` | OAuth Secret gerado no Databricks | `dapixxxxxxxxxxxxxxxxxxxxxxxx` |
 
 ---

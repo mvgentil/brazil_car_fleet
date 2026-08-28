@@ -101,7 +101,8 @@ Fato transacional consolidada com granularidade **Município × Combustível × 
 │ id_combustivel  │ INT      │ FK → silver.dim_combustivel│
 │ id_data         │ INT      │ FK → silver.dim_data      │
 │ qt_veiculos     │ BIGINT   │ Quantidade de veículos    │
-│ nm_file         │ STRING   │ Data Lineage              │
+│ dt_ingestao     │ TIMESTAMP│ Data/hora da carga (audit)│
+│ nm_file         │ STRING   │ Data Lineage (origem)     │
 └─────────────────┴──────────┴───────────────────────────┘
 ```
 
