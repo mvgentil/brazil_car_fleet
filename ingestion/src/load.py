@@ -123,10 +123,10 @@ def load_single_file(
 
     # 1. Validação de schema pré-upload
     if not skip_validation:
-        report = validate_file(filepath)
-        if report.status == Status.INVALID:
+        results, has_failure = validate_file(filepath)
+        if has_failure:
             print(f"     ❌ Schema inválido — pulando upload")
-            print_report(report)
+            print_report(results, filename)
             return False
 
     # 2. Ler arquivo
