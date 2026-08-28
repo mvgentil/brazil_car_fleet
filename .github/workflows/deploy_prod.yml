@@ -1,0 +1,40 @@
+name: Deploy to Production (Databricks Asset Bundle)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'databricks/**'
+      - '.github/workflows/deploy_prod.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy-prod:
+    name: Deploy to Databricks Prod
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Validar Databricks Asset Bundle (Prod)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          cd databricks
+          databricks bundle validate --target prod
+
+      - name: Fazer Deploy do Bundle em Produção
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          cd databricks
+          databricks bundle deploy --target prod --force

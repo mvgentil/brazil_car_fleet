@@ -1,0 +1,1080 @@
+{
+  "datasets": [
+    {
+      "name": "ds_ev_penetration",
+      "displayName": "EV and hybrid penetration",
+      "queryLines": [
+        "WITH totals AS (\n",
+        "  SELECT\n",
+        "    dt_referencia,\n",
+        "    nr_ano,\n",
+        "    nr_mes,\n",
+        "    SUM(qt_veiculos) AS total_veiculos,\n",
+        "    SUM(CASE WHEN nm_grupo IN ('Elétrico Puro', 'Híbrido') THEN qt_veiculos ELSE 0 END) AS veiculos_eletricos_hibridos\n",
+        "  FROM brazil_car_fleet.gold.frota_por_grupo_combustivel_regiao\n",
+        "  GROUP BY dt_referencia, nr_ano, nr_mes\n",
+        ")\n",
+        "SELECT\n",
+        "  dt_referencia AS reference_date,\n",
+        "  nr_ano,\n",
+        "  nr_mes,\n",
+        "  veiculos_eletricos_hibridos,\n",
+        "  total_veiculos,\n",
+        "  veiculos_eletricos_hibridos / NULLIF(total_veiculos, 0) AS penetration_rate\n",
+        "FROM totals\n",
+        "ORDER BY reference_date"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    },
+    {
+      "name": "ds_ev_latest",
+      "displayName": "Latest EV and hybrid penetration",
+      "queryLines": [
+        "WITH totals AS (\n",
+        "  SELECT\n",
+        "    dt_referencia,\n",
+        "    SUM(qt_veiculos) AS total_veiculos,\n",
+        "    SUM(CASE WHEN nm_grupo IN ('Elétrico Puro', 'Híbrido') THEN qt_veiculos ELSE 0 END) AS veiculos_eletricos_hibridos\n",
+        "  FROM brazil_car_fleet.gold.frota_por_grupo_combustivel_regiao\n",
+        "  WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM brazil_car_fleet.gold.frota_por_grupo_combustivel_regiao)\n",
+        "  GROUP BY dt_referencia\n",
+        ")\n",
+        "SELECT\n",
+        "  veiculos_eletricos_hibridos,\n",
+        "  total_veiculos,\n",
+        "  veiculos_eletricos_hibridos / NULLIF(total_veiculos, 0) AS penetration_rate\n",
+        "FROM totals"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    },
+    {
+      "name": "ds_fleet_growth",
+      "displayName": "Fleet growth by region",
+      "queryLines": [
+        "SELECT\n",
+        "  nm_regiao,\n",
+        "  qt_frota_inicio AS frota_inicio,\n",
+        "  qt_frota_fim AS frota_fim,\n",
+        "  crescimento_absoluto,\n",
+        "  crescimento_pct / 100.0 AS growth_rate\n",
+        "FROM brazil_car_fleet.gold.frota_crescimento_por_regiao\n",
+        "WHERE nm_regiao IS NOT NULL\n",
+        "ORDER BY growth_rate DESC"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    },
+    {
+      "name": "ds_regional_concentration",
+      "displayName": "Regional concentration",
+      "queryLines": [
+        "WITH latest AS (\n",
+        "  SELECT MAX(dt_referencia) AS max_dt FROM brazil_car_fleet.gold.frota_por_grupo_combustivel_regiao\n",
+        "),\n",
+        "reg AS (\n",
+        "  SELECT\n",
+        "    nm_regiao,\n",
+        "    SUM(qt_veiculos) AS frota_regional\n",
+        "  FROM brazil_car_fleet.gold.frota_por_grupo_combustivel_regiao\n",
+        "  WHERE dt_referencia = (SELECT max_dt FROM latest)\n",
+        "    AND nm_regiao IS NOT NULL\n",
+        "  GROUP BY nm_regiao\n",
+        ")\n",
+        "SELECT\n",
+        "  nm_regiao,\n",
+        "  frota_regional,\n",
+        "  frota_regional / (SELECT SUM(frota_regional) FROM reg) AS national_share\n",
+        "FROM reg\n",
+        "ORDER BY frota_regional DESC"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    },
+    {
+      "name": "ds_mom_growth",
+      "displayName": "Monthly growth by fuel group",
+      "queryLines": [
+        "SELECT\n",
+        "  dt_referencia AS reference_date,\n",
+        "  nm_grupo,\n",
+        "  qt_veiculos AS total_veiculos,\n",
+        "  crescimento_mom_pct / 100.0 AS mom_growth_rate\n",
+        "FROM brazil_car_fleet.gold.frota_crescimento_mom_por_combustivel\n",
+        "WHERE nm_grupo NOT IN ('Não Identificado', 'Combustão Renovável')\n",
+        "ORDER BY reference_date, nm_grupo"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    },
+    {
+      "name": "ds_yoy_growth_latest",
+      "displayName": "Latest annual growth by fuel and region",
+      "queryLines": [
+        "SELECT\n",
+        "  nm_regiao,\n",
+        "  nm_grupo,\n",
+        "  qt_veiculos AS total_veiculos,\n",
+        "  crescimento_yoy_pct / 100.0 AS yoy_growth_rate\n",
+        "FROM brazil_car_fleet.gold.frota_crescimento_yoy_por_combustivel_regiao\n",
+        "WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM brazil_car_fleet.gold.frota_crescimento_yoy_por_combustivel_regiao)\n",
+        "  AND nm_regiao IS NOT NULL\n",
+        "  AND nm_grupo != 'Não Identificado'\n",
+        "ORDER BY nm_regiao, nm_grupo"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    },
+    {
+      "name": "ds_top_municipios",
+      "displayName": "Top 10 municípios por frota geral",
+      "queryLines": [
+        "SELECT\n",
+        "  nm_municipio,\n",
+        "  sigla_uf,\n",
+        "  nm_regiao,\n",
+        "  SUM(qt_veiculos_total) AS total_frota\n",
+        "FROM brazil_car_fleet.gold.frota_municipio_ranking\n",
+        "WHERE nm_municipio NOT IN ('SEM INFORMACAO', 'SEM INFORMAÇÃO', 'NAO IDENTIFICADO', 'NÃO IDENTIFICADO', 'NAO SE APLICA', 'VIDE/CAMPO/OBSERVACAO')\n",
+        "  AND sigla_uf IS NOT NULL\n",
+        "GROUP BY nm_municipio, sigla_uf, nm_regiao\n",
+        "ORDER BY total_frota DESC\n",
+        "LIMIT 10"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    },
+    {
+      "name": "ds_qualidade_dados",
+      "displayName": "Qualidade de dados por estado",
+      "queryLines": [
+        "SELECT\n",
+        "  sigla_uf,\n",
+        "  nm_uf,\n",
+        "  nm_regiao,\n",
+        "  qt_total,\n",
+        "  qt_nao_identificado,\n",
+        "  pct_nao_identificado / 100.0 AS pct_nao_identificado\n",
+        "FROM brazil_car_fleet.gold.frota_qualidade_dados\n",
+        "WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM brazil_car_fleet.gold.frota_qualidade_dados)\n",
+        "  AND sigla_uf IS NOT NULL\n",
+        "ORDER BY pct_nao_identificado DESC"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    },
+    {
+      "name": "ds_ev_growth_by_region",
+      "displayName": "Crescimento acumulado EV/Híbridos por região",
+      "queryLines": [
+        "WITH periods AS (\n",
+        "  SELECT\n",
+        "    MIN(dt_referencia) AS min_dt,\n",
+        "    MAX(dt_referencia) AS max_dt\n",
+        "  FROM brazil_car_fleet.gold.frota_eletrica_e_hibrida_evolucao\n",
+        "  WHERE nm_regiao IS NOT NULL\n",
+        "),\n",
+        "regional AS (\n",
+        "  SELECT\n",
+        "    dt_referencia,\n",
+        "    nm_regiao,\n",
+        "    SUM(qt_veiculos) AS total_ev_hybrid\n",
+        "  FROM brazil_car_fleet.gold.frota_eletrica_e_hibrida_evolucao\n",
+        "  WHERE nm_regiao IS NOT NULL\n",
+        "  GROUP BY dt_referencia, nm_regiao\n",
+        "),\n",
+        "inicio AS (\n",
+        "  SELECT\n",
+        "    nm_regiao,\n",
+        "    total_ev_hybrid AS frota_inicio\n",
+        "  FROM regional\n",
+        "  WHERE dt_referencia = (SELECT min_dt FROM periods)\n",
+        "),\n",
+        "fim AS (\n",
+        "  SELECT\n",
+        "    nm_regiao,\n",
+        "    total_ev_hybrid AS frota_fim\n",
+        "  FROM regional\n",
+        "  WHERE dt_referencia = (SELECT max_dt FROM periods)\n",
+        ")\n",
+        "SELECT\n",
+        "  i.nm_regiao,\n",
+        "  i.frota_inicio,\n",
+        "  f.frota_fim,\n",
+        "  (f.frota_fim - i.frota_inicio) AS crescimento_absoluto,\n",
+        "  (f.frota_fim - i.frota_inicio) / NULLIF(i.frota_inicio, 0) AS growth_rate\n",
+        "FROM inicio i\n",
+        "JOIN fim f ON i.nm_regiao = f.nm_regiao\n",
+        "ORDER BY growth_rate DESC"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    },
+    {
+      "name": "ds_ranking_estados_ev",
+      "displayName": "Ranking de estados com mais EV/Híbridos",
+      "queryLines": [
+        "WITH latest AS (\n",
+        "  SELECT MAX(dt_referencia) AS max_dt FROM brazil_car_fleet.gold.frota_eletrica_e_hibrida_evolucao\n",
+        "),\n",
+        "agg AS (\n",
+        "  SELECT\n",
+        "    sigla_uf,\n",
+        "    nm_uf,\n",
+        "    nm_regiao,\n",
+        "    SUM(CASE WHEN nm_grupo = 'Elétrico Puro' THEN qt_veiculos ELSE 0 END) AS veiculos_eletricos_puros,\n",
+        "    SUM(CASE WHEN nm_grupo = 'Híbrido' THEN qt_veiculos ELSE 0 END) AS veiculos_hibridos,\n",
+        "    SUM(qt_veiculos) AS total_eletricos_hibridos\n",
+        "  FROM brazil_car_fleet.gold.frota_eletrica_e_hibrida_evolucao\n",
+        "  WHERE dt_referencia = (SELECT max_dt FROM latest)\n",
+        "    AND sigla_uf IS NOT NULL\n",
+        "  GROUP BY sigla_uf, nm_uf, nm_regiao\n",
+        ")\n",
+        "SELECT\n",
+        "  sigla_uf,\n",
+        "  nm_uf,\n",
+        "  nm_regiao,\n",
+        "  veiculos_eletricos_puros,\n",
+        "  veiculos_hibridos,\n",
+        "  total_eletricos_hibridos,\n",
+        "  RANK() OVER (ORDER BY total_eletricos_hibridos DESC) AS rank_nacional\n",
+        "FROM agg\n",
+        "ORDER BY total_eletricos_hibridos DESC"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    }
+  ],
+  "pages": [
+    {
+      "name": "overview",
+      "displayName": "Visão Geral & KPIs",
+      "layout": [
+        {
+          "widget": {
+            "name": "overview-header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "# 🚗 Brazil Car Fleet Dashboard\n",
+                "\n",
+                "Monitoramento analítico da frota brasileira, transição energética (elétricos e híbridos) e crescimento regional. Dados processados via **Databricks Lakeflow Pipelines** na camada Gold."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-current-fleet",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ev_latest",
+                  "fields": [
+                    {
+                      "name": "total_veiculos",
+                      "expression": "`total_veiculos`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "total_veiculos",
+                  "displayName": "Total da Frota",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "title": "Frota Total Nacional",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-ev-fleet",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ev_latest",
+                  "fields": [
+                    {
+                      "name": "veiculos_eletricos_hibridos",
+                      "expression": "`veiculos_eletricos_hibridos`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "veiculos_eletricos_hibridos",
+                  "displayName": "Elétricos + Híbridos",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "title": "Frota Elétrica e Híbrida",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-ev-penetration",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ev_latest",
+                  "fields": [
+                    {
+                      "name": "penetration_rate",
+                      "expression": "`penetration_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "penetration_rate",
+                  "displayName": "Penetração EV/Híbridos",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "title": "Taxa de Eletrificação",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-fleet-growth",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_fleet_growth",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    },
+                    {
+                      "name": "growth_rate",
+                      "expression": "`growth_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "nm_regiao",
+                  "displayName": "Região",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "growth_rate",
+                  "displayName": "Taxa de Crescimento",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "title": "Crescimento Acumulado da Frota Geral por Região",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-regional-concentration",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_regional_concentration",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    },
+                    {
+                      "name": "national_share",
+                      "expression": "`national_share`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "pie",
+              "encodings": {
+                "angle": {
+                  "fieldName": "national_share",
+                  "displayName": "Participação Nacional",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "nm_regiao",
+                  "displayName": "Região",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "title": "Concentração Regional da Frota",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 5,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-ev-trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ev_penetration",
+                  "fields": [
+                    {
+                      "name": "reference_date",
+                      "expression": "`reference_date`"
+                    },
+                    {
+                      "name": "penetration_rate",
+                      "expression": "`penetration_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "reference_date",
+                  "displayName": "Mês de Referência",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "penetration_rate",
+                  "displayName": "Penetração (%)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "title": "Evolução da Penetração de Veículos Elétricos e Híbridos",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 10,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-mom-growth",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_mom_growth",
+                  "fields": [
+                    {
+                      "name": "reference_date",
+                      "expression": "`reference_date`"
+                    },
+                    {
+                      "name": "nm_grupo",
+                      "expression": "`nm_grupo`"
+                    },
+                    {
+                      "name": "mom_growth_rate",
+                      "expression": "`mom_growth_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "line",
+              "encodings": {
+                "x": {
+                  "fieldName": "reference_date",
+                  "displayName": "Mês de Referência",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "mom_growth_rate",
+                  "displayName": "Crescimento MoM (%)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "nm_grupo",
+                  "displayName": "Grupo de Combustível",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                }
+              },
+              "frame": {
+                "title": "Crescimento Mensal (MoM) por Grupo de Combustível",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 10,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-yoy-regional",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_yoy_growth_latest",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    },
+                    {
+                      "name": "nm_grupo",
+                      "expression": "`nm_grupo`"
+                    },
+                    {
+                      "name": "yoy_growth_rate",
+                      "expression": "`yoy_growth_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "nm_regiao",
+                  "displayName": "Região",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "yoy_growth_rate",
+                  "displayName": "Crescimento YoY (%)",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                },
+                "color": {
+                  "fieldName": "nm_grupo",
+                  "displayName": "Grupo de Combustível",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "title": "Crescimento Anual (YoY) por Combustível e Região (Último Período)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 15,
+            "width": 12,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "table-top-municipios",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_top_municipios",
+                  "fields": [
+                    {
+                      "name": "nm_municipio",
+                      "expression": "`nm_municipio`"
+                    },
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    },
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    },
+                    {
+                      "name": "total_frota",
+                      "expression": "`total_frota`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "nm_municipio",
+                    "displayName": "Município"
+                  },
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF"
+                  },
+                  {
+                    "fieldName": "nm_regiao",
+                    "displayName": "Região"
+                  },
+                  {
+                    "fieldName": "total_frota",
+                    "displayName": "Total da Frota",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Top 10 Municípios com Maior Frota Geral (IBGE)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 21,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "table-qualidade-dados",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_qualidade_dados",
+                  "fields": [
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    },
+                    {
+                      "name": "nm_uf",
+                      "expression": "`nm_uf`"
+                    },
+                    {
+                      "name": "qt_total",
+                      "expression": "`qt_total`"
+                    },
+                    {
+                      "name": "pct_nao_identificado",
+                      "expression": "`pct_nao_identificado`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF"
+                  },
+                  {
+                    "fieldName": "nm_uf",
+                    "displayName": "Estado"
+                  },
+                  {
+                    "fieldName": "qt_total",
+                    "displayName": "Frota Total",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "pct_nao_identificado",
+                    "displayName": "% Não Identificado",
+                    "format": {
+                      "type": "number-percent",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Qualidade dos Dados por Estado (% Não Identificado)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 21,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "chart-ev-growth-regional",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ev_growth_by_region",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    },
+                    {
+                      "name": "growth_rate",
+                      "expression": "`growth_rate`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "nm_regiao",
+                  "displayName": "Região",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "fieldName": "growth_rate",
+                  "displayName": "Taxa de Crescimento Acumulado",
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "title": "Crescimento Acumulado da Frota Elétrica e Híbrida por Região (2024-2026)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 27,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "table-ranking-estados-ev",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_ranking_estados_ev",
+                  "fields": [
+                    {
+                      "name": "rank_nacional",
+                      "expression": "`rank_nacional`"
+                    },
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    },
+                    {
+                      "name": "nm_uf",
+                      "expression": "`nm_uf`"
+                    },
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    },
+                    {
+                      "name": "veiculos_eletricos_puros",
+                      "expression": "`veiculos_eletricos_puros`"
+                    },
+                    {
+                      "name": "veiculos_hibridos",
+                      "expression": "`veiculos_hibridos`"
+                    },
+                    {
+                      "name": "total_eletricos_hibridos",
+                      "expression": "`total_eletricos_hibridos`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "rank_nacional",
+                    "displayName": "Posição"
+                  },
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF"
+                  },
+                  {
+                    "fieldName": "nm_uf",
+                    "displayName": "Estado"
+                  },
+                  {
+                    "fieldName": "nm_regiao",
+                    "displayName": "Região"
+                  },
+                  {
+                    "fieldName": "veiculos_eletricos_puros",
+                    "displayName": "Elétricos Puros",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "veiculos_hibridos",
+                    "displayName": "Híbridos",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "total_eletricos_hibridos",
+                    "displayName": "Total EV + Híbridos",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Ranking de Estados em Frota Elétrica e Híbrida (Último Mês)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 27,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    }
+  ]
+}

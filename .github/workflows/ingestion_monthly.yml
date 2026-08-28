@@ -1,0 +1,55 @@
+name: Ingestão Mensal da Frota (Senatran -> Databricks)
+
+on:
+  # Agendamento mensal: todo dia 15 às 06:00 UTC (ajuste conforme publicação dos dados da Senatran)
+  schedule:
+    - cron: '0 6 15 * *'
+  # Permite disparo manual pelo painel do GitHub Actions
+  workflow_dispatch:
+    inputs:
+      years:
+        description: 'Anos a extrair e carregar (ex: 2026 ou "2024 2025 2026")'
+        required: false
+        default: '2026'
+
+jobs:
+  ingest-and-load:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar uv (Astral)
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "ingestion/uv.lock"
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "ingestion/pyproject.toml"
+
+      - name: Instalar Dependências
+        run: |
+          cd ingestion
+          uv sync --frozen
+
+      - name: Extrair, Validar e Carregar no Volume do Databricks
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          DATABRICKS_CATALOG: ${{ secrets.DATABRICKS_CATALOG || 'brazil_car_fleet' }}
+          DATABRICKS_RAW_SCHEMA: ${{ secrets.DATABRICKS_RAW_SCHEMA || 'raw_data' }}
+          DATABRICKS_FLEET_VOLUME: ${{ secrets.DATABRICKS_FLEET_VOLUME || 'fleet_raw' }}
+        run: |
+          cd ingestion
+          if [ -n "${{ github.event.inputs.years }}" ]; then
+            echo "Executando backfill para o(s) ano(s): ${{ github.event.inputs.years }}"
+            uv run src/load.py --year ${{ github.event.inputs.years }}
+          else
+            echo "Executando carga incremental do mês anterior..."
+            uv run src/load.py --previous-month
+          fi

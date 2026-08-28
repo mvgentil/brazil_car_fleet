@@ -1,0 +1,14 @@
+[project]
+name = "frota-veiculos-brasil-ingestion"
+version = "0.1.0"
+description = "Local ingestion pipeline: extract, validate schema and load fleet data to Databricks Volume"
+readme = "../README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "databricks-sdk>=0.40.0",
+    "openpyxl>=3.1.5",
+    "pandas>=3.0.1",
+    "python-dotenv>=1.0.0",
+    "requests>=2.32.5",
+]
