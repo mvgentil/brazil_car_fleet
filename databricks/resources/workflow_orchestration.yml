@@ -1,0 +1,48 @@
+resources:
+  jobs:
+    orchestration_frota:
+      name: "frota-pipeline-orchestration-${bundle.target}"
+
+      # ──────────────────────────────────────────────────────────────
+      # Trigger: dispara automaticamente quando um arquivo CSV cai
+      # no Volume fleet_raw. O caminho usa notação /Volumes/.
+      # ──────────────────────────────────────────────────────────────
+      trigger:
+        pause_status: UNPAUSED
+        file_arrival:
+          url: /Volumes/${var.catalog}/${var.raw_schema}/fleet_raw/
+          # min_time_between_triggers_seconds evita disparos em rajada
+          # quando múltiplos arquivos são carregados de uma vez.
+          min_time_between_triggers_seconds: 300   # 5 minutos
+          wait_after_last_change_seconds: 60       # aguarda 60s após o último arquivo
+
+      # ──────────────────────────────────────────────────────────────
+      # Comportamento em caso de falha
+      # ──────────────────────────────────────────────────────────────
+      max_concurrent_runs: 1   # evita execuções paralelas
+      email_notifications:
+        on_failure:
+          - matheusvgentil@gmail.com
+
+      # ──────────────────────────────────────────────────────────────
+      # Tarefas em sequência: raw → bronze → silver → gold
+      # ──────────────────────────────────────────────────────────────
+      tasks:
+        - task_key: raw_to_bronze
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.pipeline_raw_to_bronze.id}
+            full_refresh: false
+
+        - task_key: bronze_to_silver
+          depends_on:
+            - task_key: raw_to_bronze
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.pipeline_bronze_to_silver.id}
+            full_refresh: false
+
+        - task_key: silver_to_gold
+          depends_on:
+            - task_key: bronze_to_silver
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.pipeline_silver_to_gold.id}
+            full_refresh: false

@@ -1,0 +1,45 @@
+name: CI & Pull Request Validation
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate-code-and-bundle:
+    name: Lint, Test & Bundle Validation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout do Repositório
+        uses: actions/checkout@v4
+
+      - name: Instalar uv (Astral)
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "ingestion/uv.lock"
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: "ingestion/pyproject.toml"
+
+      - name: Instalar Dependências do Módulo de Ingestão
+        run: |
+          cd ingestion
+          uv sync --frozen
+
+      - name: Instalar Databricks CLI
+        uses: databricks/setup-cli@main
+
+      - name: Validar Bundle em Dev e Prod (Sintaxe & Schemas)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          cd databricks
+          databricks bundle validate --target dev
+          databricks bundle validate --target prod

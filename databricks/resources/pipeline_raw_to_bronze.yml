@@ -1,0 +1,21 @@
+resources:
+  pipelines:
+    pipeline_raw_to_bronze:
+      name: "frota-raw-to-bronze-${bundle.target}"
+
+      catalog: ${var.catalog}
+      schema: ${var.bronze_schema}
+
+      libraries:
+        - notebook:
+            path: ../src/pipeline/raw_to_bronze.py
+
+      configuration:
+        # Passados como spark conf e acessíveis dentro do DLT via spark.conf.get()
+        catalog: ${var.catalog}
+        raw_schema: ${var.raw_schema}
+        fleet_volume: fleet_raw
+        rfb_volume: rfb_municipios_raw
+
+      continuous: false
+      serverless: true

@@ -1,0 +1,6 @@
+resources:
+  dashboards:
+    brazil_car_fleet_dashboard:
+      display_name: Brazil Car Fleet Dashboard
+      file_path: ../src/dashboard/brazil_car_fleet.lvdash.json
+      warehouse_id: ${var.sql_warehouse_id}

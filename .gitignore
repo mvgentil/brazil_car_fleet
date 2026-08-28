@@ -1,4 +1,4 @@
-# Python-generated files
+# ── Python ────────────────────────────────────────────────────────
 __pycache__/
 *.py[oc]
 build/
@@ -6,7 +6,33 @@ dist/
 wheels/
 *.egg-info
 
-# Virtual environments
-.venv
+# ── Virtual environments ──────────────────────────────────────────
+.venv/
+ingestion/.venv/
 
-data/
+# ── Credenciais e segredos ────────────────────────────────────────
+ingestion/.env
+.env
+*.env
+
+# ── Dados brutos locais ───────────────────────────────────────────
+data/raw/
+data/*.csv
+data/*.xlsx
+ingestion/data/
+
+# ── Databricks bundle artifacts & cache ────────────────────────────
+databricks/.databricks/
+databricks/__pycache__/
+.databricks/
+
+# ── IDE & Scratch / Agent internals ───────────────────────────────
+scratch/
+.gemini/
+.agents/
+.ai-dev-kit/
+.claude/
+.idea/
+.vscode/
+*.swp
+.DS_Store

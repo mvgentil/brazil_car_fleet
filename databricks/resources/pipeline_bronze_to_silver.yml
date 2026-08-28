@@ -1,0 +1,19 @@
+resources:
+  pipelines:
+    pipeline_bronze_to_silver:
+      name: "frota-bronze-to-silver-${bundle.target}"
+
+      catalog: ${var.catalog}
+      schema: ${var.silver_schema}
+
+      libraries:
+        - notebook:
+            path: ../src/pipeline/bronze_to_silver.py
+
+      configuration:
+        catalog: ${var.catalog}
+        bronze_schema: ${var.bronze_schema}
+        silver_schema: ${var.silver_schema}
+
+      continuous: false
+      serverless: true

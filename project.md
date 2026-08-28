@@ -1,184 +1,168 @@
-# Plano de Projeto — Frota de Veículos por Combustível e Município (Brasil)
-> Databricks Medallion Architecture · Bronze → Silver → Gold
+# 📋 Arquitetura e Especificação Técnica — Frota de Veículos Brasil
+> **Databricks Medallion Architecture** · Lakeflow Pipelines (Spark Declarative Pipelines) · Unity Catalog · Serverless Compute · AI/BI Dashboards
 
 ---
 
 ## 1. Visão Geral da Arquitetura
 
+O projeto implementa uma arquitetura medalhão orientada a eventos (*event-driven*) para processamento, enriquecimento e análise da frota de veículos brasileira por município e tipo de combustível:
+
 ```
-Bronze (raw)             Silver (curated)                  Gold (analytical)
-──────────────────       ─────────────────────────────     ─────────────────────────
-frota_raw           →    dim_municipio                 →   frota_por_regiao
-rfb_municipios_raw  →    dim_combustivel                   frota_eletrica_evolucao
-                    →    dim_data                      →   frota_flex_vs_combustao
-seed: uf_regiao     →    fato_frota                    →   frota_por_estado_mes
-```
-
-### Tabelas Bronze
-
-| Tabela                   | Fonte                        | Descrição                                      |
-|--------------------------|------------------------------|------------------------------------------------|
-| `bronze.frota_raw`       | Arquivos xlsx do Detran/Senatran | Dados de frota por município e combustível, exatamente como vieram |
-| `bronze.rfb_municipios_raw` | CSV da Receita Federal    | Código do município, nome e sigla UF — ingerido sem transformação |
-
----
-
-## 2. Bronze → Silver
-
-### 2.1 dim_data
-
-Extraída a partir do campo `nm_file` com regex. Mapeie o nome do mês em português para o número do mês.
-
-| Coluna         | Tipo    | Exemplo        |
-|----------------|---------|----------------|
-| `id_data`      | INT     | `202404`       |
-| `nm_mes`       | STRING  | `Abril`        |
-| `nr_mes`       | INT     | `4`            |
-| `nr_ano`       | INT     | `2024`         |
-| `dt_referencia`| DATE    | `2024-04-01`   |
-
-**Lógica de extração:**
-```python
-# Padrão: D_Frota_por_UF_Municipio_COMBUSTIVEL_Abril_2024.xlsx
-regexp_extract(nm_file, r'_([A-Za-záéíóúãõêç]+)_(\d{4})\.xlsx', 1)  # mês
-regexp_extract(nm_file, r'_([A-Za-záéíóúãõêç]+)_(\d{4})\.xlsx', 2)  # ano
+ ┌───────────────────────┐      ┌─────────────────────────────┐      ┌──────────────────────────────┐
+ │     Camada Bronze     │      │        Camada Silver        │      │         Camada Gold          │
+ │   (Raw & Streaming)   │      │  (Star Schema & 100% IBGE)  │      │     (KPIs & Agregações)      │
+ ├───────────────────────┤      ├─────────────────────────────┤      ├──────────────────────────────┤
+ │ • frota_raw           │ ───► │ • dim_municipio (5.570 UFs) │ ───► │ • frota_eletrica_e_hibrida_ev│
+ │ • frota_quarentena    │      │ • dim_combustivel (Grupos)  │      │ • frota_por_grupo_comb_reg   │
+ │ • frota_quality_metric│      │ • dim_data (Mês / Ano / Ref)│      │ • frota_crescimento_mom      │
+ │ • rfb_municipios_raw  │      │ • fato_frota (Surrogate FKs)│      │ • frota_crescimento_yoy      │
+ └───────────────────────┘      └─────────────────────────────┘      │ • frota_crescimento_regiao   │
+                                                                     │ • frota_municipio_ranking    │
+                                                                     │ • frota_qualidade_dados      │
+                                                                     └──────────────────────────────┘
+                                                                                    │
+                                                                                    ▼
+                                                                     📊 Brazil Car Fleet Dashboard
 ```
 
 ---
 
-### 2.2 dim_municipio
+## 2. Camada Bronze (Ingestão e Validação Bruta)
 
-Construída a partir do join entre `bronze.frota_raw` e `bronze.rfb_municipios_raw`, enriquecida com `nm_regiao` via seed table. O código da Receita Federal é equivalente ao código IBGE de 7 dígitos — padrão federal comum a todos os sistemas.
+### 2.1 Componentes e Tabelas
 
-| Coluna              | Tipo   | Exemplo          |
-|---------------------|--------|------------------|
-| `id_municipio`      | INT    | surrogate key    |
-| `cd_ibge_municipio` | STRING | `1200013`        |
-| `nm_municipio`      | STRING | `ACRELANDIA`     |
-| `nm_uf`             | STRING | `ACRE`           |
-| `sigla_uf`          | STRING | `AC`             |
-| `nm_regiao`         | STRING | `Norte`          |
-
-**Estratégia de join e normalização de nomes:**
-
-O nome do município no `frota_raw` vem em caixa alta e sem acento (padrão Detran). O CSV da Receita Federal pode ter acentuação. Antes do join é obrigatório normalizar os dois lados: remover acentos, colocar em upper case e remover caracteres especiais. O join é feito por `nm_municipio_normalizado + sigla_uf`.
-
-Após o join, registre quantos municípios do `frota_raw` ficaram sem match — isso indica inconsistências de grafia que precisam de tratamento manual ou fuzzy matching.
+| Tabela | Tipo | Fonte de Dados | Propósito e Regras de Qualidade |
+|---|---|---|---|
+| `bronze.frota_raw` | `@dp.table` (Streaming) | `/Volumes/brazil_car_fleet/raw_data/fleet_raw/` | Ingestão incremental via **Auto Loader** com schema estrito (`uf`, `municipio`, `combustivel_veiculo`, `qtd_veiculos`, `nm_file`) e `header=false`. Registros inválidos são direcionados para a quarentena via `@dp.expect_or_quarantine`. |
+| `bronze.frota_quarentena` | `@dp.table` | Quarentena do Auto Loader | Armazena registros rejeitados (nulos em UF/município/combustível ou quantidades negativas). |
+| `bronze.frota_quality_metrics` | `@dp.materialized_view` | `bronze.frota_raw` | Monitoramento de auditoria de variação volumétrica mês a mês (alerta de variação > ±5%). |
+| `bronze.rfb_municipios_raw` | `@dp.materialized_view` | `/Volumes/.../rfb_municipios_raw/` | Tabela oficial de municípios da Receita Federal (códigos TOM e IBGE), codificação ISO-8859-1. |
 
 ---
 
-### 2.3 dim_combustivel
+## 3. Camada Silver (Modelo Dimensional / Star Schema)
 
-Normalize os 29 tipos distintos em dois níveis: o tipo exato e o grupo analítico.
+### 3.1 `silver.dim_data`
+Extraída e calculada a partir do nome do arquivo (`nm_file`) com regex semântica robusta a variações históricas (ex: `Maro`, `Março`, `Dezembro_20241`, `copy_of_`).
 
-| Coluna               | Tipo    | Exemplo                   |
-|----------------------|---------|---------------------------|
-| `id_combustivel`     | INT     | surrogate key             |
-| `nm_combustivel`     | STRING  | `GASOLINA/ALCOOL/ELETRICO`|
-| `nm_grupo`           | STRING  | `Híbrido`                 |
-| `fl_identificado`    | BOOLEAN | `true` / `false`          |
-
-**Proposta de agrupamento:**
-
-| Grupo              | Combustíveis incluídos |
-|--------------------|------------------------|
-| `Elétrico Puro`    | ELETRICO, ELETRICO/FONTE EXTERNA, ELETRICO/FONTE INTERNA, CELULA COMBUSTIVEL |
-| `Híbrido`          | HIBRIDO, HIBRIDO PLUG-IN, GASOLINA/ELETRICO, DIESEL/ELETRICO, ETANOL/ELETRICO, GASOLINA/ALCOOL/ELETRICO |
-| `Flex`             | ALCOOL/GASOLINA, GASOL/GAS NATURAL COMBUSTIVEL, GASOLINA/GAS NATURAL VEICULAR, ALCOOL/GAS NATURAL COMBUSTIVEL, ALCOOL/GAS NATURAL VEICULAR, DIESEL/GAS NATURAL VEICULAR, DIESEL/GAS NATURAL COMBUSTIVEL, GASOLINA/ALCOOL/GAS NATURAL |
-| `Combustão Fóssil` | GASOLINA, DIESEL, GAS NATURAL VEICULAR, GAS METANO, GAS/NATURAL/LIQUEFEITO, GASOGENIO |
-| `Combustão Renovável` | ALCOOL |
-| `Não Identificado` | Sem Informação, VIDE/CAMPO/OBSERVACAO, Não Identificado, Não se Aplica |
-
-> **Nota:** o grupo `Não Identificado` tem `fl_identificado = false`. Mantenha esses registros na fato — eles representam volume real da frota e são relevantes para detectar qualidade de dados por município/estado. **Não remova, filtre na camada Gold** quando necessário.
+| Coluna | Tipo | Descrição | Exemplo |
+|---|---|---|---|
+| `id_data` | INT | Surrogate key (YYYYMM) | `202607` |
+| `nm_mes` | STRING | Nome oficial do mês em português | `Julho` |
+| `nr_mes` | INT | Número do mês (1 a 12) | `7` |
+| `nr_ano` | INT | Ano de referência (4 dígitos) | `2026` |
+| `dt_referencia`| DATE | Data do primeiro dia do mês | `2026-07-01` |
+| `nm_file` | STRING | Rastreabilidade do arquivo de origem | `copy_of_D_Frota_...Julho_2026.xlsx` |
 
 ---
 
-### 2.4 fato_frota
+### 3.2 `silver.dim_municipio`
+Construída pelo cruzamento sanitizado entre `bronze.frota_raw` e `bronze.rfb_municipios_raw`. 
+- **Sanitização:** Remoção completa de acentos, pontuações e padronização para caixa alta.
+- **Lookup duplo:** Correspondência primária por nome IBGE normalizado + sigla UF, e fallback por nome TOM (Tabela de Órgãos e Municípios da Receita Federal).
+- **Correção de divergências históricas:** Dicionário de sinônimos para 14 grafias arcaicas do Senatran (ex: `SAO LUIZ DO PARAITINGA` ➔ `SAO LUIS DO PARAITINGA`, `ASSIS BRASIL`, `MOJI MIRIM`).
+- **Resultado:** **100,00% de correspondência** (5.570 municípios brasileiros oficiais + 1 registro para não identificados).
 
-Tabela central da Silver. Granularidade: **município × combustível × mês/ano**.
-
-| Coluna          | Tipo    | Observação                       |
-|-----------------|---------|----------------------------------|
-| `id_fato`       | BIGINT  | surrogate key                    |
-| `id_municipio`  | INT     | FK → dim_municipio               |
-| `id_combustivel`| INT     | FK → dim_combustivel             |
-| `id_data`       | INT     | FK → dim_data                    |
-| `qt_veiculos`   | INT     | quantidade registrada            |
-| `nm_file`       | STRING  | rastreabilidade até a fonte raw  |
-
-> Mantenha `nm_file` na Silver para rastreabilidade (data lineage). Facilita reprocessamento se uma fonte for corrigida.
-
----
-
-## 3. Silver → Gold
-
-As tabelas Gold são derivadas analíticas, otimizadas para consumo em dashboards e análises. Sugestões:
-
-### 3.1 `frota_eletrica_e_hibrida_evolucao`
-Evolução mensal da frota elétrica + híbrida por estado.
-Útil para: tendência de eletrificação, impacto de incentivos fiscais.
-
-### 3.2 `frota_por_grupo_combustivel_regiao`
-Volume total por grupo de combustível × região × mês.
-Útil para: comparativos Norte/Sul/Sudeste, distribuição de flex vs combustão.
-
-### 3.3 `frota_qualidade_dados`
-Percentual de registros `Não Identificado` por UF e mês.
-Útil para: monitorar qualidade da fonte, identificar UFs com subnotificação.
-
-### 3.4 `frota_municipio_ranking`
-Top municípios por total de frota, por grupo de combustível.
-Útil para: identificar mercados prioritários, benchmarks regionais.
+| Coluna | Tipo | Descrição | Exemplo |
+|---|---|---|---|
+| `id_municipio` | INT | Surrogate key gerada via `dense_rank` | `1042` |
+| `cd_ibge_municipio` | STRING | Código oficial IBGE (7 dígitos) | `3550308` |
+| `cd_tom` | STRING | Código TOM da Receita Federal | `7107` |
+| `nm_municipio` | STRING | Nome oficial padronizado | `SAO PAULO` |
+| `nm_uf` | STRING | Nome por extenso do estado | `SAO PAULO` |
+| `sigla_uf` | STRING | Sigla da unidade federativa | `SP` |
+| `nm_regiao` | STRING | Macrorregião geográfica | `Sudeste` |
 
 ---
 
-## 4. Decisões de Qualidade de Dados
+### 3.3 `silver.dim_combustivel`
+Normalização de mais de 29 denominações técnicas do Senatran em grupos de inteligência analítica:
 
-| Situação                              | Tratamento recomendado                                               |
-|---------------------------------------|----------------------------------------------------------------------|
-| `Sem Informação`                      | Mapear para grupo `Não Identificado`, `fl_identificado = false`     |
-| `VIDE/CAMPO/OBSERVACAO`               | Idem                                                                |
-| `Não se Aplica`                       | Idem — pode indicar categoria não aplicável ao município (ex: GNV em zona rural sem posto) |
-| `Não Identificado`                    | Idem                                                                |
-| Município duplicado em UFs diferentes | Resolver via `cd_ibge_municipio` (ver sugestão 2.2)                 |
-| Meses faltando para algum município   | Não preencher com zero — deixar ausente e tratar na camada Gold     |
-
----
-
-## 5. Checklist de Implementação
-
-### Bronze → Silver
-- [ ] Ingerir CSV da Receita Federal como `bronze.rfb_municipios_raw`
-- [ ] Criar seed table `uf_regiao` (27 linhas: sigla_uf → nm_uf, nm_regiao)
-- [ ] Criar `dim_municipio` com normalização de nomes + join RFB + enriquecimento de região
-- [ ] Auditar municípios sem match no join e corrigir grafias divergentes
-- [ ] Criar `dim_data` com parser do `nm_file`
-- [ ] Criar `dim_combustivel` com mapeamento de `nm_grupo` e `fl_identificado`
-- [ ] Criar `fato_frota` com joins nas dimensões e surrogate keys
-
-### Silver → Gold
-- [ ] `frota_eletrica_e_hibrida_evolucao`
-- [ ] `frota_por_grupo_combustivel_regiao`
-- [ ] `frota_qualidade_dados`
-- [ ] `frota_municipio_ranking`
-
-### Opcional / Melhorias futuras
-- [ ] Adicionar `populacao_estimada` (IBGE) na `dim_municipio` para calcular frota per capita
-- [ ] Criar alerta de qualidade de dados quando `% Não Identificado > threshold` por UF/mês
-- [ ] Implementar fuzzy matching para municípios sem match no join RFB
+| Grupo Analítico (`nm_grupo`) | Categorias Técnicas Incluídas | `fl_identificado` |
+|---|---|---|
+| **Elétrico Puro** | `ELETRICO`, `ELETRICO/FONTE EXTERNA`, `ELETRICO/FONTE INTERNA`, `CELULA COMBUSTIVEL` | `true` |
+| **Híbrido** | `HIBRIDO`, `HIBRIDO PLUG-IN`, `GASOLINA/ELETRICO`, `DIESEL/ELETRICO`, `ETANOL/ELETRICO`, `GASOLINA/ALCOOL/ELETRICO` | `true` |
+| **Flex** | `ALCOOL/GASOLINA`, `GASOL/GAS NATURAL COMBUSTIVEL`, `GASOLINA/GAS NATURAL VEICULAR`, `ALCOOL/GAS NATURAL...` | `true` |
+| **Combustão Fóssil** | `GASOLINA`, `DIESEL`, `GAS NATURAL VEICULAR`, `GAS METANO`, `GAS/NATURAL/LIQUEFEITO`, `GASOGENIO` | `true` |
+| **Combustão Renovável** | `ALCOOL` | `true` |
+| **Não Identificado** | `SEM INFORMACAO`, `VIDE/CAMPO/OBSERVACAO`, `NAO IDENTIFICADO`, `NAO SE APLICA` | `false` |
 
 ---
 
-## 6. Diagrama de Relacionamento (Silver)
+### 3.4 `silver.fato_frota`
+Fato transacional consolidada com granularidade **Município × Combustível × Mês/Ano**:
 
 ```
-dim_data ──────────────────────┐
-                               │
-dim_municipio ─────────────── fato_frota
-                               │
-dim_combustivel ───────────────┘
+┌────────────────────────────────────────────────────────┐
+│                   silver.fato_frota                    │
+├─────────────────┬──────────┬───────────────────────────┤
+│ id_fato         │ BIGINT   │ PK incremental / hash     │
+│ id_municipio    │ INT      │ FK → silver.dim_municipio │
+│ id_combustivel  │ INT      │ FK → silver.dim_combustivel│
+│ id_data         │ INT      │ FK → silver.dim_data      │
+│ qt_veiculos     │ BIGINT   │ Quantidade de veículos    │
+│ nm_file         │ STRING   │ Data Lineage              │
+└─────────────────┴──────────┴───────────────────────────┘
 ```
 
 ---
 
-*Gerado para o projeto Frota Brasil · Databricks Medallion Architecture*
+## 4. Camada Gold (Materialized Views Analíticas)
+
+1. **`gold.frota_eletrica_e_hibrida_evolucao`:** Série temporal mensal de veículos elétricos puros e híbridos por estado e região.
+2. **`gold.frota_por_grupo_combustivel_regiao`:** Volume total por grupo de combustível × macrorregião geográfica × mês.
+3. **`gold.frota_crescimento_mom_por_combustivel`:** Variação percentual mês a mês (*Month-over-Month*) por tipo de motorização.
+4. **`gold.frota_crescimento_yoy_por_combustivel_regiao`:** Comparativo ano a ano (*Year-over-Year*) para o mesmo mês do ano anterior (lag 12).
+5. **`gold.frota_crescimento_por_regiao`:** Crescimento percentual e absoluto acumulado no período total do dataset.
+6. **`gold.frota_municipio_ranking`:** Ranking de cidades com maiores volumes gerais e por grupo de eletrificação.
+7. **`gold.frota_qualidade_dados`:** Monitoramento da taxa de preenchimento e subnotificação por estado.
+
+---
+
+## 5. Orquestração e CI/CD (DataOps / GitOps)
+
+- **Gatilho Orientado a Eventos:** `FileArrivalTrigger` monitorando `/Volumes/brazil_car_fleet/raw_data/fleet_raw/`.
+- **Pipeline em Cascata:** A chegada de um novo arquivo dispara `raw_to_bronze` ➔ `bronze_to_silver` ➔ `silver_to_gold` automaticamente.
+- **Validação Contínua (`ci_validation.yml`):** Execução de linting, testes de validação e verificação de integridade dos Asset Bundles em Pull Requests.
+- **Deploy Contínuo em Produção (`deploy_prod.yml`):** Merge na branch `main` dispara `databricks bundle deploy --target prod` via Service Principal.
+- **Automação Mensal (`ingestion_monthly.yml`):** GitHub Actions agendado (`0 6 15 * *`) executando `load.py --previous-month` em Produção.
+- **Infraestrutura como Código:** Databricks Asset Bundles (DAB) versionando pipelines, jobs e dashboard.
+
+---
+
+## 6. Checklist de Implementação do Projeto
+
+### Bronze
+- [x] Ingestão streaming com Auto Loader e schema enforcement (`header=false`)
+- [x] Tabela de quarentena para expectativas de dados inválidos
+- [x] Materialized view de métricas de qualidade e anomalias de volume
+- [x] Ingestão da base de municípios da Receita Federal (RFB) com encoding ISO-8859-1
+
+### Silver
+- [x] Dimensão Calendário (`dim_data`) com regex semântica multi-formato
+- [x] Dimensão Municípios (`dim_municipio`) com enriquecimento IBGE, TOM e Região (100% match)
+- [x] Dimensão Combustíveis (`dim_combustivel`) com agrupamento analítico e flags de identificação
+- [x] Tabela Fato (`fato_frota`) com surrogate keys e data lineage preservado
+
+### Gold
+- [x] `frota_eletrica_e_hibrida_evolucao`
+- [x] `frota_por_grupo_combustivel_regiao`
+- [x] `frota_crescimento_mom_por_combustivel`
+- [x] `frota_crescimento_yoy_por_combustivel_regiao`
+- [x] `frota_crescimento_por_regiao`
+- [x] `frota_municipio_ranking`
+- [x] `frota_qualidade_dados`
+
+### Visualização & Automação
+- [x] AI/BI Dashboard nativo no Databricks com 12 widgets interativos e formatação percentual precisa
+- [x] Orquestração com Databricks Asset Bundles e File Arrival Trigger despausado
+- [x] Módulo Python conteinerizado em Docker para extração incremental automática do mês anterior
+- [x] Workflow CI/CD no GitHub Actions
+
+---
+
+## 7. Backlog e Evoluções Futuras
+
+- [ ] Refatorar `dim_data` para dimensão calendário canônica gerada deterministicamente por sequence temporal (2020 a 2030)
+- [ ] Enriquecer `dim_municipio` com população estimada do Censo IBGE para calcular frota per capita e taxa de motorização
+- [ ] Implementar alertas automáticos via Slack / Teams para anomalias de qualidade de dados na camada Bronze
