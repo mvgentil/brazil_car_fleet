@@ -141,7 +141,9 @@ brazil_car_fleet (catalog)
 frota-veiculos-brasil/
 ├── .github/
 │   └── workflows/
-│       └── ingestion_monthly.yml    # Pipeline CI/CD agendado no GitHub Actions
+│       ├── ci_validation.yml        # Validação de código e bundles em PRs
+│       ├── deploy_prod.yml          # Deploy contínuo em Produção no merge na main
+│       └── ingestion_monthly.yml    # Ingestão agendada (dia 15) via Service Principal
 │
 ├── ingestion/                       # Módulo Python de Ingestão e Validação
 │   ├── Dockerfile                   # Imagem Docker leve com Python 3.13 + Astral uv

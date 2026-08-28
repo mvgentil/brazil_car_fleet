@@ -16,6 +16,7 @@
 from pyspark import pipelines as dp
 from pyspark.sql import functions as F
 from pyspark.sql.types import IntegerType, BooleanType
+from pyspark.sql.window import Window
 
 # ──────────────────────────────────────────────────────────────────
 # Configuração
@@ -156,6 +157,7 @@ def normalize_text_col(col_expr):
 
 
 # ──────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────
 # silver.dim_data
 # ──────────────────────────────────────────────────────────────────
 
@@ -167,15 +169,14 @@ def normalize_text_col(col_expr):
 def dim_data():
     """
     Extrai mês e ano do campo nm_file de forma robusta.
-    Suporta variações como sufixos numéricos (ex: '20241', '2025-1'),
-    prefixos ('copy_of_', 'copy2_of_') e variações de grafia de meses ('Maro', 'Março').
+    Garante unicidade estrita por id_data (mês/ano) para evitar duplicatas de dimensão.
     """
     mes_map_expr = F.create_map([F.lit(x) for pair in MES_MAP.items() for x in pair])
     mes_nome_expr = F.create_map([F.lit(x) for pair in MES_NOME_MAP.items() for x in pair])
 
-    df = (
+    raw_dates = (
         spark.table(BRONZE_FROTA)
-        .select("nm_file")
+        .select("nm_file", "dt_ingestao")
         .distinct()
         .withColumn(
             "nm_mes_raw",
@@ -198,9 +199,18 @@ def dim_data():
         )
         .withColumn("id_data", (F.col("nr_ano") * 100 + F.col("nr_mes")).cast(IntegerType()))
         .withColumn("dt_referencia", F.to_date(F.concat_ws("-", F.col("nr_ano"), F.col("nr_mes"), F.lit("01"))))
+        .filter(F.col("id_data").isNotNull())
+    )
+
+    window_dt = Window.partitionBy("id_data").orderBy(F.col("dt_ingestao").desc(), F.col("nm_file").desc())
+
+    return (
+        raw_dates
+        .withColumn("rn", F.row_number().over(window_dt))
+        .filter(F.col("rn") == 1)
+        .drop("rn", "dt_ingestao")
         .select("id_data", "nm_mes", "nr_mes", "nr_ano", "dt_referencia", "nm_file")
     )
-    return df
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -341,37 +351,68 @@ def dim_combustivel():
 def fato_frota():
     """
     Join entre frota_raw e todas as dimensões para produzir a fato.
-    Mantém nm_file para rastreabilidade até a fonte raw (data lineage).
+    Aplica deduplicação estrita no grão (id_municipio, id_combustivel, id_data)
+    garantindo idempotência caso múltiplos arquivos ou reprocessamentos contenham o mesmo período.
     """
-    frota = spark.table(BRONZE_FROTA)
+    frota = spark.table(BRONZE_FROTA).distinct()
     dim_mun = dp.read("dim_municipio")
     dim_comb = dp.read("dim_combustivel")
     dim_dt = dp.read("dim_data")
 
-    return (
+    # Mapeamento do id_data a partir do nm_file para cada registro bruto
+    mes_map_expr = F.create_map([F.lit(x) for pair in MES_MAP.items() for x in pair])
+    frota_with_data = (
         frota
+        .withColumn(
+            "nm_mes_raw",
+            F.upper(
+                F.regexp_extract(
+                    F.col("nm_file"),
+                    r"(?i)(janeiro|fevereiro|mar[coç]|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)",
+                    1,
+                )
+            ),
+        )
+        .withColumn("nr_ano", F.regexp_extract(F.col("nm_file"), r"(20\d{2})", 1).cast(IntegerType()))
+        .withColumn("nr_mes", mes_map_expr[F.col("nm_mes_raw")])
+        .withColumn("id_data", (F.col("nr_ano") * 100 + F.col("nr_mes")).cast(IntegerType()))
+    )
+
+    joined = (
+        frota_with_data
         .join(
             dim_mun.select("id_municipio", "nm_municipio", "nm_uf"),
-            (frota["municipio"] == dim_mun["nm_municipio"])
-            & (frota["uf"] == dim_mun["nm_uf"]),
+            (frota_with_data["municipio"] == dim_mun["nm_municipio"])
+            & (frota_with_data["uf"] == dim_mun["nm_uf"]),
             "left",
         )
         .join(
             dim_comb.select("id_combustivel", "nm_combustivel"),
-            frota["combustivel_veiculo"] == dim_comb["nm_combustivel"],
-            "left",
-        )
-        .join(
-            dim_dt.select("id_data", "nm_file"),
-            frota["nm_file"] == dim_dt["nm_file"],
+            frota_with_data["combustivel_veiculo"] == dim_comb["nm_combustivel"],
             "left",
         )
         .select(
-            F.monotonically_increasing_id().alias("id_fato"),
             F.col("id_municipio"),
             F.col("id_combustivel"),
             F.col("id_data"),
             F.col("qtd_veiculos").alias("qt_veiculos"),
-            frota["nm_file"],
+            F.col("dt_ingestao"),
+            frota_with_data["nm_file"],
         )
+    )
+
+    # Deduplicação no grão canônico da fato: 1 registro por município × combustível × mês
+    # Garante que o dado com timestamp de ingestão mais recente (dt_ingestao DESC) seja sempre o preservado
+    window_grain = Window.partitionBy("id_municipio", "id_combustivel", "id_data").orderBy(
+        F.col("dt_ingestao").desc(),
+        F.col("nm_file").desc()
+    )
+
+    return (
+        joined
+        .withColumn("row_num", F.row_number().over(window_grain))
+        .filter(F.col("row_num") == 1)
+        .drop("row_num")
+        .withColumn("id_fato", F.monotonically_increasing_id())
+        .select("id_fato", "id_municipio", "id_combustivel", "id_data", "qt_veiculos", "dt_ingestao", "nm_file")
     )
