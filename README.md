@@ -15,7 +15,7 @@
 
 <br>
 
-[![Brazil Car Fleet Dashboard](assets/dashboard.png)](assets/Brazil%20Car%20Fleet%20Dashboard%202026-08-28%2019_22.pdf)
+[![Brazil Car Fleet Dashboard](assets/dashboard.png)](assets/dashboard.pdf)
 
 <sub>📊 *Visualização do Databricks AI/BI Dashboard. Clique na imagem para abrir o relatório completo em PDF.*</sub>
 
@@ -42,13 +42,13 @@ Este projeto implementa uma plataforma corporativa de dados orientada a eventos 
 
 | Indicador Analítico | Métrica Consolidada | Destaque Regional / Tendência |
 |---|---|---|
-| **Crescimento de Eletrificados (2024–2026)** | **+718,3% (Brasil)** | Aceleração expressiva no **Norte (+914,7%)** e **Nordeste (+841,4%)** |
-| **Líder Nacional em Eletrificação** | **São Paulo (SP)** | **669.102 veículos** (188k elétricos puros + 480k híbridos) |
-| **Top 2 e 3 Estados em Frota EV/Híbrida** | **Minas Gerais (MG) e DF** | **177.146** (MG) e **155.708** (DF) veículos eletrificados |
-| **Concentração da Frota Total** | **Região Sudeste** | Concentra **48,9%** de todos os veículos automotores do país |
-| **Qualidade e Identificação** | **> 99,8% Classificado** | Apenas ~0,15% da frota classificada como *Sem Informação* |
+| **Crescimento de Eletrificados (2024–2026)** | **+294,4% (Brasil)** | Aceleração expressiva no **Norte** e **Nordeste** |
+| **Taxa de veículos elétricos** | **0,89%** | Frota de veículos eletrificados consolidada em agosto/2026 |
+| **Líder Nacional em Eletrificação** | **São Paulo (SP)** | **334 mil veículos** (94 mil elétricos puros + 240 mil híbridos) |
+| **Top 2 e 3 Estados em Frota EV/Híbrida** | **Minas Gerais (MG) e DF** | **88 mil** (MG) e **77 mil** (DF) veículos eletrificados |
+| **Concentração da Frota Total** | **Região Sudeste** | Concentra **46,86%** de todos os veículos automotores do país |
 
-*Confira o relatório visual completo exportado em:* [**`assets/Brazil Car Fleet Dashboard 2026-08-28 19_22.pdf`**](assets/Brazil%20Car%20Fleet%20Dashboard%202026-08-28%2019_22.pdf)
+*Confira o relatório visual completo exportado em:* [**`assets/dashboard.pdf`**](assets/dashboard.pdf)
 
 </div>
 
@@ -135,7 +135,7 @@ frota-veiculos-brasil/
 │   └── ingestion_monthly.yml    # Ingestão mensal agendada via Service Principal
 │
 ├── assets/
-│   └── Brazil Car Fleet Dashboard 2026-08-28 19_22.pdf # Export do Dashboard Lakeview
+│   └── dashboard.pdf              # Export do Dashboard Lakeview
 │
 ├── ingestion/                       # Módulo de Extração e Ingestão em Python
 │   ├── Dockerfile                   # Imagem Docker conteinerizada (Python 3.13 + uv)
@@ -222,5 +222,5 @@ Cadastre em **Settings ➔ Secrets and variables ➔ Actions**:
 
 Desenvolvido por **Matheus Gentil**.
 
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Matheus%20Gentil-blue?style=flat-square&logo=linkedin)](https://linkedin.com/in/matheusvgentil)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-Matheus%20Gentil-blue?style=flat-square&logo=linkedin)](https://www.linkedin.com/in/mvgentil/)
 [![GitHub](https://img.shields.io/badge/GitHub-mvgentil-black?style=flat-square&logo=github)](https://github.com/mvgentil)
