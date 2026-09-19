@@ -221,7 +221,7 @@ def frota_crescimento_mom_por_combustivel():
 @dp.materialized_view(
     name="frota_crescimento_yoy_por_combustivel_regiao",
     comment=(
-        "Variação ano-a-ano (YoY) por grupo de combustível e região geográfica. "
+        "Variação ano-a-ano (YoY) por grupo de combustível e região geográfica."
         "Compara o mesmo mês do ano anterior (lag de 12 períodos). "
         "Útil para análise de tendências estruturais de longo prazo."
     ),
