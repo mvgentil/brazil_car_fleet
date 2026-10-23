@@ -20,7 +20,7 @@ from pyspark import pipelines as dp
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-from frota_common import com_periodo, id_periodo
+from frota_common import com_periodo, id_periodo, linha_valida
 
 SILVER = spark.conf.get("silver_schema")
 GOLD = spark.conf.get("gold_schema")
@@ -288,19 +288,24 @@ def frota_crescimento_por_regiao():
 @dp.materialized_view(
     name=f"{GOLD}.qualidade_volume_mensal",
     comment=(
-        "Volume por mês de referência na bronze (todas as cargas) e na fato (lote vigente), "
-        "quantidade de lotes por mês, variação vs. mês calendário anterior e flags de anomalia. "
+        "Volume por mês de referência na bronze (linhas válidas de todas as cargas) e na fato "
+        "(lote vigente), lotes por mês, linhas rejeitadas (quarentena), data da última ingestão, "
+        "variação vs. mês calendário anterior e flags de anomalia. "
         "Não bloqueia o pipeline — use para monitoramento e alertas."
     ),
     table_properties={"quality": "monitoring"},
 )
 def qualidade_volume_mensal():
+    # Linhas inválidas (cabeçalhos, rodapés de total) ficam na quarentena e fora das somas
+    valida = linha_valida()
     bronze = (
         com_periodo(spark.read.table("frota_raw"))
+        .filter(F.col("id_data").isNotNull())
         .groupBy("id_data", "dt_referencia")
         .agg(
-            F.sum("qtd_veiculos").alias("total_veiculos_bronze"),
-            F.count("*").alias("total_registros_bronze"),
+            F.sum(F.when(valida, F.col("qtd_veiculos"))).alias("total_veiculos_bronze"),
+            F.count(F.when(valida, 1)).alias("total_registros_bronze"),
+            F.count(F.when(~valida, 1)).alias("qt_linhas_rejeitadas"),
             F.countDistinct("nm_arquivo_fonte", "dt_arquivo_modificado").alias("qt_lotes"),
             F.concat_ws(", ", F.array_sort(F.collect_set("nm_arquivo_fonte"))).alias("nm_arquivos_fonte"),
         )
@@ -312,6 +317,7 @@ def qualidade_volume_mensal():
         .agg(
             F.sum("qt_veiculos").alias("total_veiculos"),
             F.max("nm_arquivo_fonte").alias("nm_arquivo_vigente"),
+            F.max("dt_ingestao").alias("dt_ingestao_vigente"),
         )
     )
 

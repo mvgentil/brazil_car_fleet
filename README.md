@@ -70,19 +70,12 @@ Este projeto implementa uma plataforma corporativa de dados orientada a eventos 
  ┌────────────────────────────────────────────────────────────────────────┐
  │  Databricks Workflow Orchestration (Serverless)                        │
  │                                                                        │
- │  ┌─────────────────────────┐                                           │
- │  │ Pipeline 1: Raw → Bronze│ Auto Loader streaming + Data Quality      │
- │  │                         │ frota_raw, frota_quarentena, rfb_raw      │
- │  └────────────┬────────────┘                                           │
- │               ▼                                                        │
- │  ┌─────────────────────────┐                                           │
- │  │ Pipeline 2: Bronze→Silver│ Star Schema (Dimensões + Fato c/ IBGE)   │
- │  │                         │ dim_data, dim_municipio, fato_frota       │
- │  └────────────┬────────────┘                                           │
- │               ▼                                                        │
- │  ┌─────────────────────────┐                                           │
- │  │ Pipeline 3: Silver→Gold │ Agregações Analíticas e KPIs (MoM/YoY)    │
- │  └────────────┬────────────┘                                           │
+ │  ┌──────────────────────────────────────────────────────────────────┐  │
+ │  │ Pipeline único frota-medallion (Lakeflow, serverless)            │  │
+ │  │  bronze: Auto Loader + expectations + quarentena                 │  │
+ │  │  silver: Star Schema IBGE (lote mais recente por mês)            │  │
+ │  │  gold:   KPIs (MoM/YoY por data) + tabelas de qualidade          │  │
+ │  └────────────┬─────────────────────────────────────────────────────┘  │
  └───────────────┼────────────────────────────────────────────────────────┘
                  │ 3. Atualização automática
                  ▼
@@ -105,22 +98,26 @@ brazil_car_fleet (catalog)
 │   ├── fleet_raw/          ← Volume: CSVs particionados de frota
 │   └── rfb_municipios_raw/ ← Volume: Base territorial da Receita Federal (TOM/IBGE)
 ├── bronze (schema)
-│   ├── frota_raw           ← Tabela streaming (Auto Loader + schema estrito)
-│   ├── frota_quarentena    ← Quarentena de registros inválidos
+│   ├── frota_raw           ← Tabela streaming (Auto Loader, todas as linhas + metadados do lote)
+│   ├── frota_quarentena    ← Linhas que violam as regras, com motivo da rejeição
 │   └── rfb_municipios_raw  ← Cadastro oficial de municípios
 ├── silver (schema)
-│   ├── dim_data            ← Dimensão calendário (ano, mês, data_referencia)
-│   ├── dim_municipio       ← Municípios normalizados com código IBGE e Região
-│   ├── dim_combustivel     ← Agrupamento: Elétrico Puro, Híbrido, Flex, Fóssil, Renovável
-│   └── fato_frota          ← Fato transacional mensal com surrogate keys e dt_ingestao
+│   ├── dim_data              ← Calendário mensal contínuo (fl_possui_dados, fl_ultimo_mes)
+│   ├── dim_municipio         ← 1 linha por município IBGE + membro -1 (não identificado)
+│   ├── map_municipio_senatran← De-para grafia Senatran → código IBGE (com método do match)
+│   ├── dim_combustivel       ← Grupos: Elétrico Puro, Híbrido, Flex, Fóssil, Renovável (seed)
+│   └── fato_frota            ← Município IBGE × combustível × mês (estoque: não somar no tempo)
 └── gold (schema)
     ├── frota_eletrica_e_hibrida_evolucao           ← Tendência mensal de eletrificação
     ├── frota_por_grupo_combustivel_regiao          ← Volume por macrorregião × mês
-    ├── frota_crescimento_mom_por_combustivel       ← Variação percentual mês a mês
+    ├── frota_crescimento_mom_por_combustivel       ← Variação mês a mês e veículos adicionados
     ├── frota_crescimento_yoy_por_combustivel_regiao← Variação anual comparativa
     ├── frota_crescimento_por_regiao                ← Crescimento acumulado no período
     ├── frota_municipio_ranking                     ← Top municípios no último mês, por volume e tipo
-    └── frota_qualidade_dados                       ← Auditoria de registros não identificados
+    ├── frota_qualidade_dados                       ← % de combustível não identificado por UF
+    ├── qualidade_volume_mensal                     ← Volume, lotes e anomalias por mês
+    ├── qualidade_municipios_sem_match              ← Grafias sem código IBGE
+    └── qualidade_combustiveis_sem_mapeamento       ← Combustíveis fora do seed de grupos
 ```
 
 ---
@@ -150,7 +147,8 @@ frota-veiculos-brasil/
 │   ├── databricks.yml               # Definição dos targets dev e prod
 │   ├── resources/                   # Declaração dos pipelines, jobs e dashboard
 │   └── src/
-│       ├── pipeline/                # Código dos pipelines (raw_to_bronze, bronze_to_silver, silver_to_gold)
+│       ├── pipeline/                # frota_common.py + transformations/ (bronze.py, silver.py, gold.py)
+│       ├── seeds/                   # De-paras versionados (UF/região, combustível, correções de município)
 │       └── dashboard/               # Especificação JSON do AI/BI Dashboard
 │
 ├── project.md                       # Especificação técnica e arquitetura de dados
