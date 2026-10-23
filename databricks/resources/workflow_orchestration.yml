@@ -20,29 +20,18 @@ resources:
       # Comportamento em caso de falha
       # ──────────────────────────────────────────────────────────────
       max_concurrent_runs: 1   # evita execuções paralelas
+      timeout_seconds: 3600
       email_notifications:
         on_failure:
           - matheusvgentil@gmail.com
 
       # ──────────────────────────────────────────────────────────────
-      # Tarefas em sequência: raw → bronze → silver → gold
+      # Pipeline único: raw → bronze → silver → gold (o grafo resolve a ordem)
       # ──────────────────────────────────────────────────────────────
       tasks:
-        - task_key: raw_to_bronze
+        - task_key: pipeline_frota
+          max_retries: 1
+          min_retry_interval_millis: 300000
           pipeline_task:
-            pipeline_id: ${resources.pipelines.pipeline_raw_to_bronze.id}
-            full_refresh: false
-
-        - task_key: bronze_to_silver
-          depends_on:
-            - task_key: raw_to_bronze
-          pipeline_task:
-            pipeline_id: ${resources.pipelines.pipeline_bronze_to_silver.id}
-            full_refresh: false
-
-        - task_key: silver_to_gold
-          depends_on:
-            - task_key: bronze_to_silver
-          pipeline_task:
-            pipeline_id: ${resources.pipelines.pipeline_silver_to_gold.id}
+            pipeline_id: ${resources.pipelines.pipeline_frota.id}
             full_refresh: false

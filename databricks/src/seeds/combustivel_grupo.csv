@@ -1,0 +1,31 @@
+nm_combustivel_norm,nm_grupo,fl_eletrificado
+ELETRICO,Elétrico Puro,true
+ELETRICO/FONTE EXTERNA,Elétrico Puro,true
+CELULA COMBUSTIVEL,Elétrico Puro,true
+ELETRICO/FONTE INTERNA,Híbrido,true
+HIBRIDO,Híbrido,true
+HIBRIDO PLUG-IN,Híbrido,true
+HIBRIDO/GAS NATURAL VEICULAR,Híbrido,true
+GASOLINA/ELETRICO,Híbrido,true
+DIESEL/ELETRICO,Híbrido,true
+ETANOL/ELETRICO,Híbrido,true
+GASOLINA/ALCOOL/ELETRICO,Híbrido,true
+ALCOOL/GASOLINA,Flex,false
+GASOL/GAS NATURAL COMBUSTIVEL,Flex,false
+GASOLINA/GAS NATURAL VEICULAR,Flex,false
+ALCOOL/GAS NATURAL COMBUSTIVEL,Flex,false
+ALCOOL/GAS NATURAL VEICULAR,Flex,false
+DIESEL/GAS NATURAL VEICULAR,Flex,false
+DIESEL/GAS NATURAL COMBUSTIVEL,Flex,false
+GASOLINA/ALCOOL/GAS NATURAL,Flex,false
+GASOLINA,Combustão Fóssil,false
+DIESEL,Combustão Fóssil,false
+GAS NATURAL VEICULAR,Combustão Fóssil,false
+GAS METANO,Combustão Fóssil,false
+GAS/NATURAL/LIQUEFEITO,Combustão Fóssil,false
+GASOGENIO,Combustão Fóssil,false
+ALCOOL,Combustão Renovável,false
+SEM INFORMACAO,Não Identificado,false
+VIDE/CAMPO/OBSERVACAO,Não Identificado,false
+NAO IDENTIFICADO,Não Identificado,false
+NAO SE APLICA,Não Identificado,false
