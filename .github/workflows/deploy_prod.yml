@@ -19,7 +19,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Instalar Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@v1.14.0
 
       - name: Validar Databricks Asset Bundle (Prod)
         env:
@@ -37,4 +37,4 @@ jobs:
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: |
           cd databricks
-          databricks bundle deploy --target prod --force
+          databricks bundle deploy --target prod

@@ -170,12 +170,24 @@ frota-veiculos-brasil/
 cd ingestion
 uv sync
 
-# Executar carga incremental do mês anterior:
+# Carga incremental: mês mais recente publicado (tenta o mês anterior e o retrasado)
 uv run python src/load.py --previous-month
 
-# Ou carregar um mês/ano específico:
+# Um mês específico, ou todos os meses publicados de um ano (backfill)
 uv run python src/load.py --year 2026 --month 7
+uv run python src/load.py --year 2024 2025 2026
+
+# Recarregar um mês que já está no Volume (ex.: republicação da Senatran)
+uv run python src/load.py --year 2026 --month 7 --force
+
+# Cadastro de municípios da Receita Federal
+uv run python src/extract_municipios.py --upload
+
+# Lint e testes
+uv run ruff check src tests && uv run pytest
 ```
+
+Cada mês vira um arquivo `frota_{ano}_{mes}.csv` no Volume, com as colunas `nr_ano`/`nr_mes`; meses já carregados são pulados, salvo com `--force`.
 
 ### 2. Deploy da Infraestrutura com DAB
 
@@ -198,9 +210,9 @@ databricks bundle run orchestration_frota --target dev
 
 A plataforma conta com automação completa via **GitHub Actions**:
 
-1. **`ci_validation.yml` (Pull Requests):** Valida tipagem, testes de integridade e executa `databricks bundle validate` em `dev` e `prod`.
+1. **`ci_validation.yml` (Pull Requests):** Lint (`ruff`), testes (`pytest`, incluindo a consistência dos seeds do pipeline) e `databricks bundle validate` em `dev` e `prod`.
 2. **`deploy_prod.yml` (Deploy em Produção):** Disparado automaticamente no merge para a branch `main`, executando `databricks bundle deploy --target prod` via Service Principal (OAuth M2M).
-3. **`ingestion_monthly.yml` (Ingestão Agendada):** Execução agendada no dia 15 de cada mês (ou manual com seleção de ano/mês) para alimentar os dados em Produção.
+3. **`ingestion_monthly.yml` (Ingestão Agendada):** Execução no dia 15 de cada mês (mês mais recente publicado) ou manual com modo `previous-month`, `month` ou `year`; atualiza também o cadastro de municípios da Receita Federal.
 
 ---
 

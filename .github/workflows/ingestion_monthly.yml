@@ -1,29 +1,51 @@
 name: Ingestão Mensal da Frota (Senatran -> Databricks)
 
 on:
-  # Agendamento mensal: todo dia 15 às 06:00 UTC (ajuste conforme publicação dos dados da Senatran)
+  # Agendamento mensal: todo dia 15 às 06:00 UTC. Carrega o mês mais recente publicado
+  # (tenta o mês anterior e o retrasado, pois a Senatran publica com atraso).
   schedule:
     - cron: '0 6 15 * *'
   # Permite disparo manual pelo painel do GitHub Actions
   workflow_dispatch:
     inputs:
+      mode:
+        description: 'Modo de carga'
+        type: choice
+        required: true
+        default: previous-month
+        options:
+          - previous-month
+          - month
+          - year
       year:
-        description: 'Ano a processar (ex: 2026)'
-        required: false
-        default: '2026'
-      month:
-        description: 'Mês específico (1 a 12). Deixe em branco para carregar o ano todo.'
+        description: 'Ano (modos month e year), ex: 2026'
         required: false
         default: ''
-      previous_month:
-        description: 'Executar carga do mês anterior automaticamente (true/false)'
+      month:
+        description: 'Mês 1 a 12 (modo month)'
+        required: false
+        default: ''
+      force:
+        description: 'Recarregar meses que já estão no Volume'
         type: boolean
         required: false
         default: false
 
+concurrency:
+  group: ingestion-monthly
+  cancel-in-progress: false
+
 jobs:
   ingest-and-load:
     runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+      DATABRICKS_CATALOG: ${{ secrets.DATABRICKS_CATALOG || 'brazil_car_fleet' }}
+      DATABRICKS_RAW_SCHEMA: ${{ secrets.DATABRICKS_RAW_SCHEMA || 'raw_data' }}
+      DATABRICKS_FLEET_VOLUME: ${{ secrets.DATABRICKS_FLEET_VOLUME || 'fleet_raw' }}
     steps:
       - name: Checkout do Repositório
         uses: actions/checkout@v4
@@ -40,31 +62,35 @@ jobs:
           python-version-file: "ingestion/pyproject.toml"
 
       - name: Instalar Dependências
-        run: |
-          cd ingestion
-          uv sync --frozen
+        working-directory: ingestion
+        run: uv sync --frozen --no-dev
 
-      - name: Extrair, Validar e Carregar no Volume do Databricks
+      # Antes da frota: o upload da frota dispara o pipeline, que lê o cadastro de municípios atualizado
+      - name: Atualizar Cadastro de Municípios (Receita Federal)
+        working-directory: ingestion
+        run: uv run src/extract_municipios.py --upload
+
+      - name: Extrair, Validar e Carregar a Frota no Volume do Databricks
+        working-directory: ingestion
         env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
-          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-          DATABRICKS_CATALOG: ${{ secrets.DATABRICKS_CATALOG || 'brazil_car_fleet' }}
-          DATABRICKS_RAW_SCHEMA: ${{ secrets.DATABRICKS_RAW_SCHEMA || 'raw_data' }}
-          DATABRICKS_FLEET_VOLUME: ${{ secrets.DATABRICKS_FLEET_VOLUME || 'fleet_raw' }}
+          MODE: ${{ github.event.inputs.mode || 'previous-month' }}
+          YEAR: ${{ github.event.inputs.year }}
+          MONTH: ${{ github.event.inputs.month }}
+          FORCE: ${{ github.event.inputs.force == 'true' && '--force' || '' }}
         run: |
-          cd ingestion
-          if [ "${{ github.event.inputs.previous_month }}" = "true" ]; then
-            echo "Executando carga incremental do mês anterior..."
-            uv run src/load.py --previous-month
-          elif [ -n "${{ github.event.inputs.month }}" ]; then
-            echo "Executando carga para Ano ${{ github.event.inputs.year }}, Mês ${{ github.event.inputs.month }}..."
-            uv run src/load.py --year ${{ github.event.inputs.year }} --month ${{ github.event.inputs.month }}
-          elif [ -n "${{ github.event.inputs.year }}" ]; then
-            echo "Executando carga para o ano completo: ${{ github.event.inputs.year }}"
-            uv run src/load.py --year ${{ github.event.inputs.year }}
-          else
-            echo "Executando carga padrão (mês anterior)..."
-            uv run src/load.py --previous-month
-          fi
+          case "$MODE" in
+            previous-month)
+              uv run src/load.py --previous-month $FORCE
+              ;;
+            month)
+              if [ -z "$YEAR" ] || [ -z "$MONTH" ]; then echo "::error::Modo month exige year e month"; exit 1; fi
+              uv run src/load.py --year "$YEAR" --month "$MONTH" $FORCE
+              ;;
+            year)
+              if [ -z "$YEAR" ]; then echo "::error::Modo year exige year"; exit 1; fi
+              uv run src/load.py --year $YEAR $FORCE
+              ;;
+            *)
+              echo "::error::Modo desconhecido: $MODE"; exit 1
+              ;;
+          esac

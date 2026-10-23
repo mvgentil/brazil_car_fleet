@@ -2,27 +2,29 @@
 Carga de arquivos de frota para o Volume raw do Databricks.
 
 Cada arquivo .xlsx é:
-  1. Lido com pandas
+  1. Baixado do site da Senatran (exceto no modo --file)
   2. Validado (schema) — falha individualmente, não bloqueia os demais
-  3. Enriquecido com coluna nm_file (rastreabilidade)
+  3. Enriquecido com nm_file (rastreabilidade) e nr_ano/nr_mes (mês de referência)
   4. Serializado para CSV em memória
-  5. Carregado no Databricks Volume via SDK
+  5. Carregado no Databricks Volume via SDK com nome canônico por mês
 
 Destino no Volume:
-  /Volumes/brazil_car_fleet/raw_data/fleet_raw/{arquivo}.csv
+  /Volumes/{catalog}/raw_data/fleet_raw/frota_{ano}_{mes:02d}.csv
+
+Um mês já presente no Volume é pulado (use --force para recarregar). Recarregar
+substitui o arquivo e o pipeline passa a usar a versão mais recente daquele mês.
 
 Uso:
-    python src/load.py --previous-month        # Carga incremental do mês anterior (ideal para agendamento)
-    python src/load.py --year 2026 --month 7  # Carga de um mês específico
-    python src/load.py --year 2026            # Todos os arquivos de 2026 (backfill)
-    python src/load.py                        # Todos os anos disponíveis
+    python src/load.py --previous-month        # Último mês publicado (tenta M-1 e M-2) — agendamento
+    python src/load.py --year 2026 --month 7  # Um mês específico
+    python src/load.py --year 2026            # Todos os meses publicados de 2026 (backfill)
+    python src/load.py --file arquivo.xlsx    # Arquivo local avulso (mês extraído do nome)
 
-Configuração (via ingestion/.env ou variáveis de ambiente):
-    DATABRICKS_HOST   — URL do workspace (ex: https://dbc-xxx.cloud.databricks.com)
-    DATABRICKS_TOKEN  — Personal access token
+Configuração: ver src/databricks_client.py
 """
 
 import argparse
+import datetime
 import io
 import os
 import sys
@@ -33,99 +35,59 @@ if sys.stdout and hasattr(sys.stdout, "reconfigure"):
 
 import pandas as pd
 from databricks.sdk import WorkspaceClient
-from dotenv import load_dotenv
 
-from validate import validate_file, print_report, Status, normalize_column_name
-from extract_fleet import extract_month, get_target_previous_period, MONTH_NAMES
-
-load_dotenv()
+from databricks_client import file_exists, get_databricks_client, volume_path
+from extract_fleet import MONTH_NAMES, extract_month, get_target_previous_period, parse_period_from_filename
+from validate import normalize_column_name, print_report, validate_file
 
 # ──────────────────────────────────────────────────────────────────
 # Configuração
 # ──────────────────────────────────────────────────────────────────
 
-RAW_DIR = os.path.join(os.path.dirname(__file__), "..", "data", "raw")
-
-CATALOG = os.getenv("DATABRICKS_CATALOG", "brazil_car_fleet")
-RAW_SCHEMA = os.getenv("DATABRICKS_RAW_SCHEMA", "raw_data")
 FLEET_VOLUME = os.getenv("DATABRICKS_FLEET_VOLUME", "fleet_raw")
+VOLUME_BASE_PATH = volume_path(FLEET_VOLUME)
+COLUMN_ORDER = ["uf", "municipio", "combustivel_veiculo", "qtd_veiculos", "nm_file", "nr_ano", "nr_mes"]
 
-VOLUME_BASE_PATH = f"/Volumes/{CATALOG}/{RAW_SCHEMA}/{FLEET_VOLUME}"
-COLUMN_ORDER = ["uf", "municipio", "combustivel_veiculo", "qtd_veiculos", "nm_file"]
+# Quantos meses para trás o modo --previous-month procura (a Senatran publica com atraso)
+PREVIOUS_MONTH_LOOKBACK = 2
 
 
-# ──────────────────────────────────────────────────────────────────
-# Databricks client
-# ──────────────────────────────────────────────────────────────────
+def canonical_volume_path(year: int, month: int) -> str:
+    return f"{VOLUME_BASE_PATH}/frota_{year}_{month:02d}.csv"
 
-def get_databricks_client() -> WorkspaceClient:
-    """
-    Inicializa o cliente Databricks a partir de variáveis de ambiente.
-    Suporta autenticação via Service Principal (OAuth M2M) ou Personal Access Token (PAT).
-    """
-    host = os.getenv("DATABRICKS_HOST")
-    client_id = os.getenv("DATABRICKS_CLIENT_ID")
-    client_secret = os.getenv("DATABRICKS_CLIENT_SECRET")
-    token = os.getenv("DATABRICKS_TOKEN")
 
-    if not host:
-        raise EnvironmentError("Configure DATABRICKS_HOST no arquivo ingestion/.env")
-
-    # 1. Prioridade para Service Principal (OAuth M2M)
-    if client_id and client_secret:
-        # Remove DATABRICKS_TOKEN para evitar conflito com OAuth M2M no SDK
-        os.environ.pop("DATABRICKS_TOKEN", None)
-        return WorkspaceClient(host=host, client_id=client_id, client_secret=client_secret)
-
-    # 2. Fallback para Personal Access Token (PAT)
-    if token:
-        return WorkspaceClient(host=host, token=token)
-
-    raise EnvironmentError(
-        "Credenciais Databricks não encontradas.\n"
-        "Configure DATABRICKS_CLIENT_ID + DATABRICKS_CLIENT_SECRET (Service Principal) "
-        "ou DATABRICKS_TOKEN (PAT) no arquivo ingestion/.env"
-    )
+def new_result() -> dict[str, list[str]]:
+    return {"uploaded": [], "skipped": [], "failed": []}
 
 
 # ──────────────────────────────────────────────────────────────────
 # Upload individual
 # ──────────────────────────────────────────────────────────────────
 
-def upload_csv_to_volume(
-    client: WorkspaceClient,
-    df: pd.DataFrame,
-    original_filename: str,
-) -> str:
-    """Serializa DataFrame para CSV e faz upload ao Volume.
-
-    O arquivo é serializado em memória (sem escrever em disco).
-    """
-    csv_filename = os.path.splitext(original_filename)[0] + ".csv"
-    volume_path = f"{VOLUME_BASE_PATH}/{csv_filename}"
-
+def upload_csv_to_volume(client: WorkspaceClient, df: pd.DataFrame, volume_file: str) -> None:
+    """Serializa DataFrame para CSV em memória (sem escrever em disco) e faz upload ao Volume."""
     buffer = io.BytesIO()
     df.to_csv(buffer, index=False, header=False, encoding="utf-8")
     buffer.seek(0)
-
-    client.files.upload(volume_path, buffer, overwrite=True)
-    return volume_path
+    client.files.upload(volume_file, buffer, overwrite=True)
 
 
 def load_single_file(
     filepath: str,
     client: WorkspaceClient,
+    year: int,
+    month: int,
     skip_validation: bool = False,
 ) -> bool:
     """Valida e envia um único arquivo .xlsx para o Databricks Volume."""
     filename = os.path.basename(filepath)
-    print(f"  📄 Processando: {filename}")
+    print(f"  📄 Processando: {filename} ({MONTH_NAMES[month]}/{year})")
 
     # 1. Validação de schema pré-upload
     if not skip_validation:
         results, has_failure = validate_file(filepath)
         if has_failure:
-            print(f"     ❌ Schema inválido — pulando upload")
+            print("     ❌ Schema inválido — pulando upload")
             print_report(results, filename)
             return False
 
@@ -139,17 +101,23 @@ def load_single_file(
 
     # 3. Adicionar rastreabilidade e ordenar colunas
     df["nm_file"] = filename
+    df["nr_ano"] = year
+    df["nr_mes"] = month
     missing_cols = set(COLUMN_ORDER) - set(df.columns)
     if missing_cols:
         print(f"     ❌ Colunas obrigatórias ausentes após normalização: {missing_cols}")
         return False
 
     df = df[COLUMN_ORDER]
+    # Int64 (nullable) evita que um único nulo transforme a coluna em float ("123.0"),
+    # o que faria o schema LongType da bronze ler a quantidade como NULL
+    df["qtd_veiculos"] = pd.to_numeric(df["qtd_veiculos"], errors="coerce").astype("Int64")
 
     # 4. Upload para o Volume
+    volume_file = canonical_volume_path(year, month)
     try:
-        volume_path = upload_csv_to_volume(client, df, filename)
-        print(f"     ✅ Enviado ao Volume: {volume_path} ({len(df):,} linhas)\n")
+        upload_csv_to_volume(client, df, volume_file)
+        print(f"     ✅ Enviado ao Volume: {volume_file} ({len(df):,} linhas)\n")
         return True
     except Exception as e:
         print(f"     ❌ Erro no upload para o Databricks Volume: {e}\n")
@@ -157,7 +125,7 @@ def load_single_file(
 
 
 # ──────────────────────────────────────────────────────────────────
-# Modos de Carga (Incremental / Anual / Arquivo Único)
+# Modos de Carga (Mês / Último publicado / Ano)
 # ──────────────────────────────────────────────────────────────────
 
 def load_month(
@@ -165,59 +133,71 @@ def load_month(
     month: int,
     client: WorkspaceClient,
     skip_validation: bool = False,
+    force: bool = False,
+    missing_is_failure: bool = True,
 ) -> dict[str, list[str]]:
-    """Extrai e carrega exclusivamente o arquivo de um determinado mês e ano."""
-    month_name = MONTH_NAMES.get(month, str(month))
-    print(f"\n📅 Carga Incremental do Mês: {month_name}/{year}")
+    """Extrai e carrega o arquivo de um determinado mês e ano."""
+    label = f"{MONTH_NAMES[month]}/{year}"
+    result = new_result()
 
-    result: dict[str, list[str]] = {"uploaded": [], "skipped": [], "failed": []}
-
-    # 1. Extrai o arquivo da web se necessário
-    filepath = extract_month(year, month)
-    if not filepath:
-        print(f"⚠️  Não foi possível obter o arquivo de {month_name}/{year} para carga.")
-        result["failed"].append(f"{month_name}_{year}")
+    if not force and file_exists(client, canonical_volume_path(year, month)):
+        print(f"⏭️  {label} já está no Volume — pulando (use --force para recarregar).")
+        result["skipped"].append(label)
         return result
 
-    # 2. Carrega no volume
-    success = load_single_file(filepath, client, skip_validation=skip_validation)
-    filename = os.path.basename(filepath)
-    if success:
-        result["uploaded"].append(filename)
-    else:
-        result["failed"].append(filename)
+    filepath = extract_month(year, month)
+    if not filepath:
+        print(f"⚠️  Não foi possível obter o arquivo de {label}.")
+        result["failed" if missing_is_failure else "skipped"].append(label)
+        return result
 
+    success = load_single_file(filepath, client, year, month, skip_validation=skip_validation)
+    result["uploaded" if success else "failed"].append(label)
     return result
+
+
+def load_latest_available(
+    client: WorkspaceClient,
+    skip_validation: bool = False,
+    force: bool = False,
+) -> dict[str, list[str]]:
+    """Carrega o mês mais recente publicado, procurando de M-1 até M-PREVIOUS_MONTH_LOOKBACK.
+
+    Para no primeiro mês que já estiver no Volume (nada novo publicado) ou que for carregado.
+    Falha só se nenhum mês da janela estiver publicado — sinal de atraso anormal da fonte.
+    """
+    for months_back in range(1, PREVIOUS_MONTH_LOOKBACK + 1):
+        year, month = get_target_previous_period(months_back)
+        res = load_month(year, month, client, skip_validation, force, missing_is_failure=False)
+        if res["uploaded"] or res["failed"]:
+            return res
+        if not force and file_exists(client, canonical_volume_path(year, month)):
+            print("ℹ️  Nenhum mês mais recente publicado pela Senatran ainda.")
+            return res
+
+    print(f"❌ Nenhum dos últimos {PREVIOUS_MONTH_LOOKBACK} meses está publicado no site da Senatran.")
+    res = new_result()
+    res["failed"].append(f"últimos {PREVIOUS_MONTH_LOOKBACK} meses")
+    return res
 
 
 def load_year(
     year: int,
     client: WorkspaceClient,
     skip_validation: bool = False,
+    force: bool = False,
 ) -> dict[str, list[str]]:
-    """Processa todos os .xlsx locais de um ano: valida schema e faz upload individual."""
-    year_dir = os.path.join(RAW_DIR, str(year))
-    result: dict[str, list[str]] = {"uploaded": [], "skipped": [], "failed": []}
+    """Baixa e carrega todos os meses publicados de um ano (meses não publicados são pulados)."""
+    today = datetime.date.today()
+    result = new_result()
+    print(f"\n📅 Processando Ano Completo {year}\n")
 
-    if not os.path.isdir(year_dir):
-        print(f"⚠️  Pasta não encontrada: {year_dir}")
-        return result
-
-    files = sorted(f for f in os.listdir(year_dir) if f.endswith(".xlsx"))
-
-    if not files:
-        print(f"⚠️  Nenhum arquivo .xlsx em {year_dir}")
-        return result
-
-    print(f"\n📅 Processando Ano Completo {year} — {len(files)} arquivo(s)\n")
-
-    for filename in files:
-        filepath = os.path.join(year_dir, filename)
-        success = load_single_file(filepath, client, skip_validation=skip_validation)
-        if success:
-            result["uploaded"].append(filename)
-        else:
-            result["failed"].append(filename)
+    for month in range(1, 13):
+        if (year, month) >= (today.year, today.month):
+            break
+        res = load_month(year, month, client, skip_validation, force, missing_is_failure=False)
+        for k in result:
+            result[k] += res[k]
 
     return result
 
@@ -227,7 +207,7 @@ def main():
     parser.add_argument(
         "--previous-month",
         action="store_true",
-        help="Executa carga incremental do mês anterior (calcula ano e mês dinamicamente).",
+        help="Carrega o mês mais recente publicado (tenta o mês anterior e o retrasado).",
     )
     parser.add_argument(
         "--year",
@@ -243,59 +223,66 @@ def main():
     parser.add_argument(
         "--file",
         type=str,
-        help="Caminho para um arquivo .xlsx específico para carga avulsa.",
+        help="Caminho para um arquivo .xlsx específico para carga avulsa (mês extraído do nome).",
     )
     parser.add_argument(
         "--skip-validation",
         action="store_true",
         help="Pula a validação de schema antes do upload.",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Recarrega meses que já estão no Volume.",
+    )
     args = parser.parse_args()
 
     client = get_databricks_client()
-    totals = {"uploaded": 0, "skipped": 0, "failed": 0}
+    totals = new_result()
 
     if args.previous_month:
-        target_year, target_month = get_target_previous_period()
-        month_name = MONTH_NAMES.get(target_month, str(target_month))
-        print(f"🎯 Modo Automático Incremental selecionado.")
-        print(f"   Período Alvo: {month_name}/{target_year}")
-        res = load_month(target_year, target_month, client, skip_validation=args.skip_validation)
-        for k in totals:
-            totals[k] += len(res[k])
+        print("🎯 Modo Automático Incremental selecionado.")
+        res = load_latest_available(client, args.skip_validation, args.force)
 
     elif args.file:
         if not os.path.isfile(args.file):
             print(f"❌ Arquivo não encontrado: {args.file}")
             sys.exit(1)
-        success = load_single_file(args.file, client, skip_validation=args.skip_validation)
-        if success:
-            totals["uploaded"] += 1
-        else:
-            totals["failed"] += 1
+        period = parse_period_from_filename(args.file)
+        if not period:
+            print(f"❌ Não foi possível identificar mês/ano no nome do arquivo: {args.file}")
+            sys.exit(1)
+        res = new_result()
+        success = load_single_file(args.file, client, *period, skip_validation=args.skip_validation)
+        res["uploaded" if success else "failed"].append(os.path.basename(args.file))
 
     elif args.month:
         if not args.year or len(args.year) != 1:
             parser.error("--month requer exatamente um --year especificado.")
-        res = load_month(args.year[0], args.month, client, skip_validation=args.skip_validation)
-        for k in totals:
-            totals[k] += len(res[k])
+        res = load_month(args.year[0], args.month, client, args.skip_validation, args.force)
+
+    elif args.year:
+        res = new_result()
+        for year in args.year:
+            year_res = load_year(year, client, args.skip_validation, args.force)
+            for k in res:
+                res[k] += year_res[k]
 
     else:
-        years = args.year or [2024, 2025, 2026]
-        for year in years:
-            res = load_year(year, client, skip_validation=args.skip_validation)
-            for k in totals:
-                totals[k] += len(res[k])
+        parser.error("Informe --previous-month, --year [--month] ou --file.")
+
+    for k in totals:
+        totals[k] += res[k]
 
     # Resumo final
     print(f"\n{'═' * 60}")
     print("🏁 Carga concluída!")
-    print(f"   ✅ Uploaded : {totals['uploaded']} arquivo(s)")
-    print(f"   ❌ Failed   : {totals['failed']} arquivo(s)")
+    print(f"   ✅ Uploaded : {len(totals['uploaded'])} mês(es) {totals['uploaded']}")
+    print(f"   ⏭️  Skipped  : {len(totals['skipped'])} mês(es) {totals['skipped']}")
+    print(f"   ❌ Failed   : {len(totals['failed'])} mês(es) {totals['failed']}")
     print(f"{'═' * 60}")
 
-    if totals["failed"] > 0:
+    if totals["failed"]:
         sys.exit(1)
 
 

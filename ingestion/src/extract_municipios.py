@@ -1,16 +1,17 @@
 """
 Extração e carga da tabela de municípios da Receita Federal.
 Baixa o arquivo CSV oficial e, opcionalmente, faz upload direto para o Volume raw do Databricks.
+
+Configuração: ver src/databricks_client.py (mesmas credenciais e catálogo do load.py).
 """
 
 import argparse
 import io
 import os
-import requests
-from databricks.sdk import WorkspaceClient
-from dotenv import load_dotenv
 
-load_dotenv()
+import requests
+
+from databricks_client import get_databricks_client, volume_path
 
 URL = "https://www.gov.br/receitafederal/dados/municipios.csv"
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
@@ -18,10 +19,8 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 }
 
-CATALOG = "brazil_car_fleet"
-RAW_SCHEMA = "raw_data"
-RFB_VOLUME = "rfb_municipios_raw"
-VOLUME_PATH = f"/Volumes/{CATALOG}/{RAW_SCHEMA}/{RFB_VOLUME}/municipios.csv"
+RFB_VOLUME = os.getenv("DATABRICKS_RFB_VOLUME", "rfb_municipios_raw")
+VOLUME_PATH = f"{volume_path(RFB_VOLUME)}/municipios.csv"
 
 
 def download_municipios(dest_path: str) -> bytes:
@@ -39,16 +38,8 @@ def download_municipios(dest_path: str) -> bytes:
 
 def upload_to_volume(content: bytes):
     """Envia o arquivo para o Volume raw do Databricks."""
-    host = os.getenv("DATABRICKS_HOST")
-    token = os.getenv("DATABRICKS_TOKEN")
-
-    if not host or not token:
-        print("⚠️  DATABRICKS_HOST ou DATABRICKS_TOKEN não configurados. Upload ignorado.")
-        return
-
-    client = WorkspaceClient(host=host, token=token)
-    buffer = io.BytesIO(content)
-    client.files.upload(VOLUME_PATH, buffer, overwrite=True)
+    client = get_databricks_client()
+    client.files.upload(VOLUME_PATH, io.BytesIO(content), overwrite=True)
     print(f"✅ Upload concluído no Volume: {VOLUME_PATH}")
 
 

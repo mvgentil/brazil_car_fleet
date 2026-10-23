@@ -3,6 +3,8 @@ import datetime
 import os
 import re
 import sys
+import unicodedata
+
 import requests
 from bs4 import BeautifulSoup
 
@@ -42,6 +44,24 @@ MONTH_NAMES: dict[int, str] = {
     5: "Maio", 6: "Junho", 7: "Julho", 8: "Agosto",
     9: "Setembro", 10: "Outubro", 11: "Novembro", 12: "Dezembro"
 }
+
+
+def parse_period_from_filename(filename: str) -> tuple[int, int] | None:
+    """Extrai (ano, mês) de um nome de arquivo da Senatran.
+
+    Exemplos:
+      - "D_Frota_por_UF_Municipio_COMBUSTIVEL_Abril_2025.xlsx" -> (2025, 4)
+      - "D_Frota_por_UF_Municipio_COMBUSTIVEL_Maro_2024.xlsx"  -> (2024, 3)
+    """
+    name = unicodedata.normalize("NFKD", os.path.basename(filename)).encode("ASCII", "ignore").decode().lower()
+    year_match = re.search(r"(20\d{2})", name)
+    if not year_match:
+        return None
+
+    for month, aliases in MONTH_ALIASES.items():
+        if any(alias in name for alias in aliases):
+            return int(year_match.group(1)), month
+    return None
 
 
 def get_target_previous_period(months_back: int = 1) -> tuple[int, int]:

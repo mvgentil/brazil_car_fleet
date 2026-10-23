@@ -27,19 +27,26 @@ jobs:
           python-version-file: "ingestion/pyproject.toml"
 
       - name: Instalar Dependências do Módulo de Ingestão
-        run: |
-          cd ingestion
-          uv sync --frozen
+        working-directory: ingestion
+        run: uv sync --frozen
+
+      - name: Lint (ruff)
+        working-directory: ingestion
+        run: uv run ruff check src tests
+
+      - name: Testes (pytest) — ingestão e seeds do pipeline
+        working-directory: ingestion
+        run: uv run pytest
 
       - name: Instalar Databricks CLI
-        uses: databricks/setup-cli@main
+        uses: databricks/setup-cli@v1.14.0
 
       - name: Validar Bundle em Dev e Prod (Sintaxe & Schemas)
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        working-directory: databricks
         run: |
-          cd databricks
           databricks bundle validate --target dev
           databricks bundle validate --target prod
