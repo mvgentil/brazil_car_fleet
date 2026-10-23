@@ -8,11 +8,32 @@ on:
       - 'databricks/**'
       - '.github/workflows/deploy_prod.yml'
   workflow_dispatch:
+    inputs:
+      auto_approve:
+        description: >-
+          Aprovar ações destrutivas (apaga/recria pipelines e as tabelas gerenciadas por eles).
+          Use só após revisar o plano do deploy anterior que falhou.
+        type: boolean
+        required: false
+        default: false
+      run_pipeline:
+        description: 'Rodar o pipeline frota-medallion após o deploy (necessário após recriar pipelines)'
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
 
 jobs:
   deploy-prod:
     name: Deploy to Databricks Prod
     runs-on: ubuntu-latest
+    env:
+      DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+      DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+      DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
 
     steps:
       - name: Checkout do Repositório
@@ -22,19 +43,18 @@ jobs:
         uses: databricks/setup-cli@v1.14.0
 
       - name: Validar Databricks Asset Bundle (Prod)
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
-          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-        run: |
-          cd databricks
-          databricks bundle validate --target prod
+        working-directory: databricks
+        run: databricks bundle validate --target prod
 
+      # Em push o deploy nunca aprova ações destrutivas: se o plano apagar pipelines, o job falha
+      # e a migração precisa ser disparada manualmente com auto_approve.
       - name: Fazer Deploy do Bundle em Produção
+        working-directory: databricks
         env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
-          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-        run: |
-          cd databricks
-          databricks bundle deploy --target prod
+          AUTO_APPROVE: ${{ github.event_name == 'workflow_dispatch' && inputs.auto_approve && '--auto-approve' || '' }}
+        run: databricks bundle deploy --target prod $AUTO_APPROVE
+
+      - name: Rodar Pipeline em Produção
+        if: github.event_name == 'workflow_dispatch' && inputs.run_pipeline
+        working-directory: databricks
+        run: databricks bundle run pipeline_frota --target prod
