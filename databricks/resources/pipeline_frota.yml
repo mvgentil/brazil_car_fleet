@@ -1,0 +1,26 @@
+resources:
+  pipelines:
+    pipeline_frota:
+      name: "frota-medallion-${bundle.target}"
+
+      # Schema padrão = bronze; silver e gold são publicadas com nomes schema.tabela
+      catalog: ${var.catalog}
+      schema: ${var.bronze_schema}
+
+      # root_path entra no sys.path: transformations/ importa frota_common.py
+      root_path: ../src/pipeline
+      libraries:
+        - glob:
+            include: ../src/pipeline/transformations/**
+
+      configuration:
+        catalog: ${var.catalog}
+        raw_schema: ${var.raw_schema}
+        silver_schema: ${var.silver_schema}
+        gold_schema: ${var.gold_schema}
+        fleet_volume: fleet_raw
+        rfb_volume: rfb_municipios_raw
+        seeds_path: ${workspace.file_path}/src/seeds
+
+      continuous: false
+      serverless: true
