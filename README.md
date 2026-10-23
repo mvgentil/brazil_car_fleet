@@ -30,7 +30,7 @@ Este projeto implementa uma plataforma corporativa de dados orientada a eventos 
 2. **Arquitetura Medalhão Declarativa:** Construída com **Databricks Lakeflow Pipelines** (Spark Declarative Pipelines), garantindo validações de qualidade por linha via Expectations e governança no **Unity Catalog**.
 3. **Modelagem Dimensional (Star Schema):** enriquecimento com o código IBGE dos municípios (cadastro da Receita Federal) e deduplicação no grão município × combustível × mês.
 4. **Infraestrutura como Código (IaC):** Versionamento de pipelines, orquestração e dashboards via **Databricks Asset Bundles (DAB)** com isolamento multi-ambiente (`dev` e `prod`).
-5. **Business Intelligence:** Painel analítico nativo no **Databricks AI/BI (Lakeview)**.
+5. **Business Intelligence:** Painel analítico nativo no **Databricks AI/BI (Lakeview)** com quatro páginas (Visão Geral, Eletrificação, Estados e Municípios, Qualidade de Dados) e filtros globais de período, região, UF e grupo de combustível.
 
 > 🤖 **Desenvolvido com Databricks AI Dev Kit:** A arquitetura adotou rigorosamente os padrões oficiais de engenharia da Databricks através das skills especializadas (`databricks-pipelines`, `databricks-jobs`, `databricks-dabs`, `databricks-aibi-dashboards`, `databricks-unity-catalog`).
 
@@ -42,11 +42,13 @@ Este projeto implementa uma plataforma corporativa de dados orientada a eventos 
 
 | Indicador Analítico | Métrica Consolidada | Destaque Regional / Tendência |
 |---|---|---|
-| **Crescimento de Eletrificados (2024–2026)** | **+294,4% (Brasil)** | Aceleração expressiva no **Norte** e **Nordeste** |
-| **Taxa de veículos elétricos** | **0,89%** | Frota de veículos eletrificados consolidada em agosto/2026 |
-| **Líder Nacional em Eletrificação** | **São Paulo (SP)** | **334 mil veículos** (94 mil elétricos puros + 240 mil híbridos) |
-| **Top 2 e 3 Estados em Frota EV/Híbrida** | **Minas Gerais (MG) e DF** | **88 mil** (MG) e **77 mil** (DF) veículos eletrificados |
-| **Concentração da Frota Total** | **Região Sudeste** | Concentra **46,86%** de todos os veículos automotores do país |
+| **Crescimento de Eletrificados (jan/2024 → set/2026)** | **+337% (Brasil)** | De 305 mil para **1,33 milhão**; **+84%** em 12 meses. Mais rápido no **Norte** (+496%) e **Nordeste** (+448%) |
+| **Taxa de Eletrificação** | **0,98%** | Elétricos puros + híbridos sobre a frota total em set/2026 (era 0,25% em jan/2024) |
+| **Maior Taxa de Eletrificação** | **Distrito Federal (DF)** | **3,76%** da frota, quase 4× a média nacional; AL (1,20%) e AM (1,06%) vêm a seguir |
+| **Maior Frota Eletrificada** | **São Paulo (SP)** | **372 mil veículos** (97 mil elétricos puros + 275 mil híbridos), seguido de MG (101 mil) e DF (87 mil) |
+| **Concentração da Frota Total** | **Região Sudeste** | **45,7%** dos veículos do país (2,3% estão com UF não identificada na fonte) |
+
+<sub>Elétricos puros incluem célula de combustível; híbridos incluem "elétrico/fonte interna". Frota é estoque: os números são do último mês, nunca a soma de meses.</sub>
 
 *Confira o relatório visual completo exportado em:* [**`assets/dashboard.pdf`**](assets/dashboard.pdf)
 
@@ -113,7 +115,10 @@ brazil_car_fleet (catalog)
     ├── frota_crescimento_mom_por_combustivel       ← Variação mês a mês e veículos adicionados
     ├── frota_crescimento_yoy_por_combustivel_regiao← Variação anual comparativa
     ├── frota_crescimento_por_regiao                ← Crescimento acumulado no período
-    ├── frota_municipio_ranking                     ← Top municípios no último mês, por volume e tipo
+    ├── frota_eletrificada_crescimento_por_regiao   ← Crescimento acumulado dos eletrificados
+    ├── frota_mensal_uf_grupo                       ← Mês × UF × grupo (base dos filtros do dashboard)
+    ├── frota_eletrificacao_uf_mensal               ← Penetração por mês × UF, com ano anterior
+    ├── frota_municipio_atual                       ← Municípios no último mês: frota, penetração e rankings
     ├── frota_qualidade_dados                       ← % de combustível não identificado por UF
     ├── qualidade_volume_mensal                     ← Volume, lotes e anomalias por mês
     ├── qualidade_municipios_sem_match              ← Grafias sem código IBGE

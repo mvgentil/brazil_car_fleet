@@ -5,10 +5,13 @@ Analíticas (consumidas pelo dashboard):
 - gold.frota_eletrica_e_hibrida_evolucao — evolução mensal de elétricos puros + híbridos por UF
 - gold.frota_por_grupo_combustivel_regiao — volume por grupo de combustível × região × mês
 - gold.frota_qualidade_dados — percentual de combustível não identificado por UF e mês
-- gold.frota_municipio_ranking — ranking de municípios no último mês, total e por grupo
+- gold.frota_mensal_uf_grupo — frota por mês × UF × grupo (base dos filtros do dashboard)
+- gold.frota_eletrificacao_uf_mensal — penetração de eletrificados por mês × UF, com ano anterior
+- gold.frota_municipio_atual — municípios no último mês: frota, eletrificados, penetração e rankings
 - gold.frota_crescimento_mom_por_combustivel — variação mês a mês por grupo de combustível
 - gold.frota_crescimento_yoy_por_combustivel_regiao — variação ano a ano por combustível × região
 - gold.frota_crescimento_por_regiao — crescimento entre o primeiro e o último mês por região
+- gold.frota_eletrificada_crescimento_por_regiao — o mesmo, só para elétricos puros + híbridos
 
 Qualidade:
 - gold.qualidade_volume_mensal — volume da bronze por mês, lotes por mês e anomalias de variação
@@ -28,6 +31,9 @@ GOLD = spark.conf.get("gold_schema")
 # Variação máxima aceitável do total de veículos entre meses consecutivos
 TOTAL_VOLUME_MAX_VARIATION_PCT = 5.0
 
+# Frota mínima para o município entrar no ranking de penetração (evita distorção de cidades pequenas)
+FROTA_MINIMA_RANKING_PENETRACAO = 10_000
+
 
 def _read_silver():
     """Fato com todas as dimensões joinadas para reutilização."""
@@ -42,6 +48,25 @@ def _read_silver():
         .join(dim_comb.select("id_combustivel", "nm_combustivel", "nm_grupo", "fl_identificado", "fl_eletrificado"), "id_combustivel")
         .join(dim_data.select("id_data", "nm_mes", "nr_mes", "nr_ano", "dt_referencia"), "id_data")
     )
+
+
+def _com_rotulos(df):
+    """Rótulos legíveis para o membro -1 (UF não identificada), usados nos filtros do dashboard."""
+    return (
+        df.withColumn("sigla_uf", F.coalesce("sigla_uf", F.lit("ND")))
+        .withColumn("nm_uf", F.coalesce("nm_uf", F.lit("NÃO IDENTIFICADA")))
+        .withColumn("nm_regiao", F.coalesce("nm_regiao", F.lit("Não identificada")))
+    )
+
+
+def _medidas_eletrificacao():
+    qt = F.col("qt_veiculos")
+    return [
+        F.sum(qt).alias("qt_total"),
+        F.sum(F.when(F.col("nm_grupo") == "Elétrico Puro", qt).otherwise(0)).alias("qt_eletrico"),
+        F.sum(F.when(F.col("nm_grupo") == "Híbrido", qt).otherwise(0)).alias("qt_hibrido"),
+        F.sum(F.when(F.col("fl_eletrificado"), qt).otherwise(0)).alias("qt_eletrificados"),
+    ]
 
 
 def _variacao_pct(atual: str, anterior: str):
@@ -119,48 +144,96 @@ def frota_qualidade_dados():
 
 
 # ──────────────────────────────────────────────────────────────────
-# gold.frota_municipio_ranking
+# gold.frota_mensal_uf_grupo
 # ──────────────────────────────────────────────────────────────────
 
 @dp.materialized_view(
-    name=f"{GOLD}.frota_municipio_ranking",
+    name=f"{GOLD}.frota_mensal_uf_grupo",
     comment=(
-        "Ranking de municípios no último mês disponível, por total de frota e por grupo de combustível. "
-        "Frota é estoque (foto do mês): não somar entre meses. "
-        "Útil para identificar mercados prioritários e benchmarks regionais."
+        "Frota por mês × UF × grupo de combustível, com rótulos para UF não identificada. "
+        "Base dos filtros de período, região, UF e grupo do dashboard."
     ),
     table_properties={"quality": "gold"},
 )
-def frota_municipio_ranking():
-    df = _read_silver()
-    chaves = ["dt_referencia", "cd_ibge_municipio", "nm_municipio", "nm_uf", "sigla_uf", "nm_regiao"]
-
-    # Frota é estoque: o ranking usa apenas o último mês, nunca a soma dos meses
-    ultimo_mes = df.agg(F.max("dt_referencia").alias("dt_referencia"))
-    atual = df.join(ultimo_mes, "dt_referencia")
-
-    agg = (
-        atual.groupBy(*chaves, "nm_grupo")
-        .agg(F.sum("qt_veiculos").alias("qt_veiculos_total"))
+def frota_mensal_uf_grupo():
+    return (
+        _com_rotulos(_read_silver())
+        .groupBy("id_data", "dt_referencia", "sigla_uf", "nm_uf", "nm_regiao", "nm_grupo", "fl_eletrificado")
+        .agg(F.sum("qt_veiculos").alias("qt_veiculos"))
     )
 
-    # Ranking geral sobre o total do município (todos os grupos), só para UFs identificadas
-    total_municipio = (
-        agg.filter(F.col("sigla_uf").isNotNull())
-        .groupBy(*chaves)
-        .agg(F.sum("qt_veiculos_total").alias("qt_frota_municipio"))
-        .withColumn("rank_geral", F.rank().over(Window.orderBy(F.desc("qt_frota_municipio"))))
+
+# ──────────────────────────────────────────────────────────────────
+# gold.frota_eletrificacao_uf_mensal
+# ──────────────────────────────────────────────────────────────────
+
+@dp.materialized_view(
+    name=f"{GOLD}.frota_eletrificacao_uf_mensal",
+    comment=(
+        "Eletrificação por mês × UF: frota total, elétricos puros, híbridos, penetração (0-1) e os "
+        "mesmos valores 12 meses antes. Para agregar penetração, some numerador e denominador "
+        "(SUM(qt_eletrificados) / SUM(qt_total)), nunca a média de pct_penetracao."
+    ),
+    table_properties={"quality": "gold"},
+)
+def frota_eletrificacao_uf_mensal():
+    base = (
+        _com_rotulos(_read_silver())
+        .groupBy("id_data", "dt_referencia", "sigla_uf", "nm_uf", "nm_regiao")
+        .agg(*_medidas_eletrificacao())
     )
 
-    w_grupo = Window.partitionBy("nm_grupo", F.col("sigla_uf").isNull()).orderBy(F.desc("qt_veiculos_total"))
+    ano_anterior = base.select(
+        "sigla_uf",
+        F.add_months("dt_referencia", 12).alias("dt_referencia"),
+        F.col("qt_total").alias("qt_total_ano_anterior"),
+        F.col("qt_eletrificados").alias("qt_eletrificados_ano_anterior"),
+    )
+    ultimo_mes = base.agg(F.max("dt_referencia").alias("dt_ultimo_mes"))
 
     return (
-        agg
+        base.join(ano_anterior, ["sigla_uf", "dt_referencia"], "left")
+        .crossJoin(ultimo_mes)
+        .withColumn("fl_ultimo_mes", F.col("dt_referencia") == F.col("dt_ultimo_mes"))
+        .drop("dt_ultimo_mes")
+        .withColumn("pct_penetracao", F.col("qt_eletrificados") / F.nullif(F.col("qt_total"), F.lit(0)))
         .withColumn(
-            "rank_no_grupo",
-            F.when(F.col("sigla_uf").isNotNull(), F.rank().over(w_grupo)),
+            "pct_penetracao_ano_anterior",
+            F.col("qt_eletrificados_ano_anterior") / F.nullif(F.col("qt_total_ano_anterior"), F.lit(0)),
         )
-        .join(total_municipio, chaves, "left")
+    )
+
+
+# ──────────────────────────────────────────────────────────────────
+# gold.frota_municipio_atual
+# ──────────────────────────────────────────────────────────────────
+
+@dp.materialized_view(
+    name=f"{GOLD}.frota_municipio_atual",
+    comment=(
+        "Municípios IBGE no último mês disponível: frota, eletrificados, penetração (0-1) e rankings. "
+        f"rank_penetracao só considera municípios com frota >= {FROTA_MINIMA_RANKING_PENETRACAO:,}."
+    ),
+    table_properties={"quality": "gold"},
+)
+def frota_municipio_atual():
+    df = _read_silver().filter(F.col("cd_ibge_municipio") != F.lit(-1))
+    ultimo_mes = df.agg(F.max("dt_referencia").alias("dt_referencia"))
+
+    atual = (
+        df.join(ultimo_mes, "dt_referencia")
+        .groupBy("dt_referencia", "cd_ibge_municipio", "nm_municipio", "sigla_uf", "nm_uf", "nm_regiao")
+        .agg(*_medidas_eletrificacao())
+        .withColumn("pct_penetracao", F.col("qt_eletrificados") / F.nullif(F.col("qt_total"), F.lit(0)))
+        .withColumn("fl_frota_minima", F.col("qt_total") >= F.lit(FROTA_MINIMA_RANKING_PENETRACAO))
+    )
+
+    w_penetracao = Window.partitionBy("fl_frota_minima").orderBy(F.desc("pct_penetracao"))
+    return (
+        atual
+        .withColumn("rank_frota", F.rank().over(Window.orderBy(F.desc("qt_total"))))
+        .withColumn("rank_eletrificados", F.rank().over(Window.orderBy(F.desc("qt_eletrificados"))))
+        .withColumn("rank_penetracao", F.when(F.col("fl_frota_minima"), F.rank().over(w_penetracao)))
     )
 
 
@@ -237,21 +310,13 @@ def frota_crescimento_yoy_por_combustivel_regiao():
 
 
 # ──────────────────────────────────────────────────────────────────
-# gold.frota_crescimento_por_regiao
+# gold.frota_crescimento_por_regiao / gold.frota_eletrificada_crescimento_por_regiao
 # ──────────────────────────────────────────────────────────────────
 
-@dp.materialized_view(
-    name=f"{GOLD}.frota_crescimento_por_regiao",
-    comment=(
-        "Crescimento acumulado de frota por região geográfica entre o primeiro e o último "
-        "mês disponíveis no dataset. Útil para ranking de regiões por crescimento absoluto e relativo."
-    ),
-    table_properties={"quality": "gold"},
-)
-def frota_crescimento_por_regiao():
+def _crescimento_por_regiao(df):
+    """Frota por região no primeiro e no último mês disponíveis, com crescimento absoluto e %."""
     monthly_regional = (
-        _read_silver()
-        .filter(F.col("nm_regiao").isNotNull())
+        df.filter(F.col("nm_regiao").isNotNull())
         .groupBy("nm_regiao", "dt_referencia")
         .agg(F.sum("qt_veiculos").alias("qt_veiculos"))
     )
@@ -279,6 +344,30 @@ def frota_crescimento_por_regiao():
         .withColumn("periodo_fim", id_periodo(F.col("dt_fim")))
         .drop("dt_inicio", "dt_fim")
     )
+
+
+@dp.materialized_view(
+    name=f"{GOLD}.frota_crescimento_por_regiao",
+    comment=(
+        "Crescimento acumulado de frota por região geográfica entre o primeiro e o último "
+        "mês disponíveis no dataset. Útil para ranking de regiões por crescimento absoluto e relativo."
+    ),
+    table_properties={"quality": "gold"},
+)
+def frota_crescimento_por_regiao():
+    return _crescimento_por_regiao(_read_silver())
+
+
+@dp.materialized_view(
+    name=f"{GOLD}.frota_eletrificada_crescimento_por_regiao",
+    comment=(
+        "Crescimento acumulado da frota eletrificada (elétricos puros + híbridos) por região entre "
+        "o primeiro e o último mês disponíveis."
+    ),
+    table_properties={"quality": "gold"},
+)
+def frota_eletrificada_crescimento_por_regiao():
+    return _crescimento_por_regiao(_read_silver().filter(F.col("fl_eletrificado")))
 
 
 # ──────────────────────────────────────────────────────────────────
