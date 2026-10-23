@@ -149,27 +149,42 @@ def frota_qualidade_dados():
 @dp.materialized_view(
     name="frota_municipio_ranking",
     comment=(
-        "Ranking de municípios por total de frota e por grupo de combustível. "
+        "Ranking de municípios no último mês disponível, por total de frota e por grupo de combustível. "
+        "Frota é estoque (foto do mês): não somar entre meses. "
         "Útil para identificar mercados prioritários e benchmarks regionais."
     ),
     table_properties={"quality": "gold"},
 )
 def frota_municipio_ranking():
     df = _read_silver()
+    chaves = ["dt_referencia", "nm_municipio", "nm_uf", "sigla_uf", "nm_regiao"]
+
+    # Frota é estoque: o ranking usa apenas o último mês, nunca a soma dos meses
+    ultimo_mes = df.agg(F.max("dt_referencia").alias("dt_referencia"))
+    atual = df.join(ultimo_mes, "dt_referencia")
 
     agg = (
-        df.groupBy("nm_municipio", "nm_uf", "sigla_uf", "nm_regiao", "nm_grupo")
+        atual.groupBy(*chaves, "nm_grupo")
         .agg(F.sum("qt_veiculos").alias("qt_veiculos_total"))
     )
 
-    w_grupo = Window.partitionBy("nm_grupo").orderBy(F.desc("qt_veiculos_total"))
-    w_geral = Window.orderBy(F.desc("qt_veiculos_total"))
+    # Ranking geral sobre o total do município (todos os grupos), só para UFs identificadas
+    total_municipio = (
+        agg.filter(F.col("sigla_uf").isNotNull())
+        .groupBy(*chaves)
+        .agg(F.sum("qt_veiculos_total").alias("qt_frota_municipio"))
+        .withColumn("rank_geral", F.rank().over(Window.orderBy(F.desc("qt_frota_municipio"))))
+    )
+
+    w_grupo = Window.partitionBy("nm_grupo", F.col("sigla_uf").isNull()).orderBy(F.desc("qt_veiculos_total"))
 
     return (
         agg
-        .withColumn("rank_no_grupo", F.rank().over(w_grupo))
-        .withColumn("rank_geral", F.rank().over(w_geral))
-        .orderBy("nm_grupo", "rank_no_grupo")
+        .withColumn(
+            "rank_no_grupo",
+            F.when(F.col("sigla_uf").isNotNull(), F.rank().over(w_grupo)),
+        )
+        .join(total_municipio, chaves, "left")
     )
 
 
