@@ -30,9 +30,16 @@ RFB_VOLUME = spark.conf.get("rfb_volume", "rfb_municipios_raw")
 FLEET_VOLUME_PATH = f"/Volumes/{CATALOG}/{RAW_SCHEMA}/{FLEET_VOLUME}/"
 RFB_VOLUME_PATH = f"/Volumes/{CATALOG}/{RAW_SCHEMA}/{RFB_VOLUME}/"
 
-# Thresholds de qualidade (espelho dos parâmetros do validate.py do ingestion/)
+# Threshold de qualidade: variação máxima aceitável do total de veículos entre meses consecutivos
 TOTAL_VOLUME_MAX_VARIATION_PCT = 5.0
-UF_DISTRIBUTION_MAX_SHIFT_PP = 3.0
+
+# Mês de referência extraído do nm_file (aceita "Marco", "Março" e "Maro" — ç perdido no encoding)
+MES_REGEX = r"(?i)(janeiro|fevereiro|mar(?:co|ço|o)|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)"
+MES_MAP = {
+    "JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "MARÇO": 3, "MARO": 3, "ABRIL": 4,
+    "MAIO": 5, "JUNHO": 6, "JULHO": 7, "AGOSTO": 8, "SETEMBRO": 9,
+    "OUTUBRO": 10, "NOVEMBRO": 11, "DEZEMBRO": 12,
+}
 
 # ──────────────────────────────────────────────────────────────────
 # Schemas estritos dos arquivos CSV (header=false, ordem fixa)
@@ -144,38 +151,50 @@ def frota_quarentena():
 @dp.materialized_view(
     name="frota_quality_metrics",
     comment=(
-        "Métricas de qualidade por arquivo mensal: total de veículos, variação percentual "
-        "em relação ao mês anterior, e flag de anomalia. Não bloqueia o pipeline — "
-        "use para monitoramento e alertas externos."
+        "Métricas de qualidade por mês de referência: total de veículos, lotes (arquivos) "
+        "que trazem o mesmo mês, variação percentual em relação ao mês anterior e flags de "
+        "anomalia. Não bloqueia o pipeline — use para monitoramento e alertas externos."
     ),
     table_properties={"quality": "monitoring"},
 )
 def frota_quality_metrics():
     """
-    Calcula, para cada nm_file:
-    - total de veículos
-    - variação percentual vs. mês anterior
-    - flag se variação excede ±5%
+    Calcula, para cada mês de referência (derivado do nm_file):
+    - total de veículos e de registros na bronze
+    - qt_lotes: arquivos distintos com o mesmo mês (> 1 indica carga duplicada na bronze)
+    - variação percentual vs. mês anterior, em ordem cronológica
+    - flag se a variação excede ±5% e flag de mês faltante na sequência
 
     Usa READS do estado atual da tabela bronze.frota_raw (batch, não streaming).
     """
-    df = spark.table(f"{CATALOG}.bronze.frota_raw")
+    mes_map_expr = F.create_map([F.lit(x) for pair in MES_MAP.items() for x in pair])
 
     monthly = (
-        df.groupBy("nm_file")
+        dp.read("frota_raw")
+        .withColumn("nr_ano", F.regexp_extract("nm_file", r"(20\d{2})", 1).cast("int"))
+        .withColumn("nr_mes", mes_map_expr[F.upper(F.regexp_extract("nm_file", MES_REGEX, 1))])
+        .groupBy("nr_ano", "nr_mes")
         .agg(
             F.sum("qtd_veiculos").alias("total_veiculos"),
             F.count("*").alias("total_registros"),
+            F.countDistinct("nm_arquivo_fonte").alias("qt_lotes"),
+            F.concat_ws(", ", F.array_sort(F.collect_set("nm_arquivo_fonte"))).alias("nm_arquivos_fonte"),
         )
-        .orderBy("nm_file")
+        .withColumn("id_data", F.col("nr_ano") * 100 + F.col("nr_mes"))
+        .withColumn("dt_referencia", F.make_date("nr_ano", "nr_mes", F.lit(1)))
     )
 
-    # Janela para variação mês-a-mês usando LAG
+    # Janela em ordem cronológica (não alfabética pelo nome do arquivo)
     from pyspark.sql.window import Window
-    w = Window.orderBy("nm_file")
+    w = Window.orderBy("dt_referencia")
 
     return (
         monthly
+        .withColumn("fl_periodo_duplicado", F.col("qt_lotes") > 1)
+        .withColumn(
+            "fl_mes_faltante",
+            F.months_between("dt_referencia", F.lag("dt_referencia").over(w)) > 1,
+        )
         .withColumn("total_veiculos_mes_anterior", F.lag("total_veiculos").over(w))
         .withColumn(
             "variacao_pct",

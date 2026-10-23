@@ -28,7 +28,7 @@
 Este projeto implementa uma plataforma corporativa de dados orientada a eventos (**Event-Driven DataOps**) no ecossistema **Databricks**, cobrindo todo o ciclo de vida dos dados:
 1. **Extração e Ingestão Incremental:** Automação em Python com Astral `uv` e Docker, agendada via GitHub Actions.
 2. **Arquitetura Medalhão Declarativa:** Construída com **Databricks Lakeflow Pipelines** (Spark Declarative Pipelines), garantindo validações de qualidade por linha via Expectations e governança no **Unity Catalog**.
-3. **Modelagem Dimensional (Star Schema):** 100% de correspondência com a malha municipal do IBGE (5.570 municípios) e deduplicação canônica com idempotência estrita.
+3. **Modelagem Dimensional (Star Schema):** enriquecimento com o código IBGE dos municípios (cadastro da Receita Federal) e deduplicação no grão município × combustível × mês.
 4. **Infraestrutura como Código (IaC):** Versionamento de pipelines, orquestração e dashboards via **Databricks Asset Bundles (DAB)** com isolamento multi-ambiente (`dev` e `prod`).
 5. **Business Intelligence:** Painel analítico nativo no **Databricks AI/BI (Lakeview)**.
 
@@ -76,7 +76,7 @@ Este projeto implementa uma plataforma corporativa de dados orientada a eventos 
  │  └────────────┬────────────┘                                           │
  │               ▼                                                        │
  │  ┌─────────────────────────┐                                           │
- │  │ Pipeline 2: Bronze→Silver│ Star Schema (Dimensões + Fato 100% IBGE) │
+ │  │ Pipeline 2: Bronze→Silver│ Star Schema (Dimensões + Fato c/ IBGE)   │
  │  │                         │ dim_data, dim_municipio, fato_frota       │
  │  └────────────┬────────────┘                                           │
  │               ▼                                                        │
@@ -110,7 +110,7 @@ brazil_car_fleet (catalog)
 │   └── rfb_municipios_raw  ← Cadastro oficial de municípios
 ├── silver (schema)
 │   ├── dim_data            ← Dimensão calendário (ano, mês, data_referencia)
-│   ├── dim_municipio       ← 5.570 municípios normalizados com código IBGE e Região
+│   ├── dim_municipio       ← Municípios normalizados com código IBGE e Região
 │   ├── dim_combustivel     ← Agrupamento: Elétrico Puro, Híbrido, Flex, Fóssil, Renovável
 │   └── fato_frota          ← Fato transacional mensal com surrogate keys e dt_ingestao
 └── gold (schema)
@@ -119,7 +119,7 @@ brazil_car_fleet (catalog)
     ├── frota_crescimento_mom_por_combustivel       ← Variação percentual mês a mês
     ├── frota_crescimento_yoy_por_combustivel_regiao← Variação anual comparativa
     ├── frota_crescimento_por_regiao                ← Crescimento acumulado no período
-    ├── frota_municipio_ranking                     ← Top municípios por volume e tipo
+    ├── frota_municipio_ranking                     ← Top municípios no último mês, por volume e tipo
     └── frota_qualidade_dados                       ← Auditoria de registros não identificados
 ```
 

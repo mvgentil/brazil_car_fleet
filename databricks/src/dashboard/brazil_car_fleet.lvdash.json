@@ -11,7 +11,7 @@
         "    nr_mes,\n",
         "    SUM(qt_veiculos) AS total_veiculos,\n",
         "    SUM(CASE WHEN nm_grupo IN ('Elétrico Puro', 'Híbrido') THEN qt_veiculos ELSE 0 END) AS veiculos_eletricos_hibridos\n",
-        "  FROM brazil_car_fleet.gold.frota_por_grupo_combustivel_regiao\n",
+        "  FROM gold.frota_por_grupo_combustivel_regiao\n",
         "  GROUP BY dt_referencia, nr_ano, nr_mes\n",
         ")\n",
         "SELECT\n",
@@ -36,8 +36,8 @@
         "    dt_referencia,\n",
         "    SUM(qt_veiculos) AS total_veiculos,\n",
         "    SUM(CASE WHEN nm_grupo IN ('Elétrico Puro', 'Híbrido') THEN qt_veiculos ELSE 0 END) AS veiculos_eletricos_hibridos\n",
-        "  FROM brazil_car_fleet.gold.frota_por_grupo_combustivel_regiao\n",
-        "  WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM brazil_car_fleet.gold.frota_por_grupo_combustivel_regiao)\n",
+        "  FROM gold.frota_por_grupo_combustivel_regiao\n",
+        "  WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM gold.frota_por_grupo_combustivel_regiao)\n",
         "  GROUP BY dt_referencia\n",
         ")\n",
         "SELECT\n",
@@ -45,6 +45,17 @@
         "  total_veiculos,\n",
         "  veiculos_eletricos_hibridos / NULLIF(total_veiculos, 0) AS penetration_rate\n",
         "FROM totals"
+      ],
+      "catalog": "brazil_car_fleet",
+      "schema": "gold"
+    },
+    {
+      "name": "ds_referencia",
+      "displayName": "Mês de referência e última ingestão",
+      "queryLines": [
+        "SELECT\n",
+        "  (SELECT date_format(MAX(dt_referencia), 'MM/yyyy') FROM gold.frota_por_grupo_combustivel_regiao) AS mes_referencia,\n",
+        "  (SELECT MAX(dt_ingestao) FROM silver.fato_frota) AS ultima_ingestao"
       ],
       "catalog": "brazil_car_fleet",
       "schema": "gold"
@@ -59,7 +70,7 @@
         "  qt_frota_fim AS frota_fim,\n",
         "  crescimento_absoluto,\n",
         "  crescimento_pct / 100.0 AS growth_rate\n",
-        "FROM brazil_car_fleet.gold.frota_crescimento_por_regiao\n",
+        "FROM gold.frota_crescimento_por_regiao\n",
         "WHERE nm_regiao IS NOT NULL\n",
         "ORDER BY growth_rate DESC"
       ],
@@ -71,13 +82,13 @@
       "displayName": "Regional concentration",
       "queryLines": [
         "WITH latest AS (\n",
-        "  SELECT MAX(dt_referencia) AS max_dt FROM brazil_car_fleet.gold.frota_por_grupo_combustivel_regiao\n",
+        "  SELECT MAX(dt_referencia) AS max_dt FROM gold.frota_por_grupo_combustivel_regiao\n",
         "),\n",
         "reg AS (\n",
         "  SELECT\n",
         "    nm_regiao,\n",
         "    SUM(qt_veiculos) AS frota_regional\n",
-        "  FROM brazil_car_fleet.gold.frota_por_grupo_combustivel_regiao\n",
+        "  FROM gold.frota_por_grupo_combustivel_regiao\n",
         "  WHERE dt_referencia = (SELECT max_dt FROM latest)\n",
         "    AND nm_regiao IS NOT NULL\n",
         "  GROUP BY nm_regiao\n",
@@ -101,7 +112,7 @@
         "  nm_grupo,\n",
         "  qt_veiculos AS total_veiculos,\n",
         "  crescimento_mom_pct / 100.0 AS mom_growth_rate\n",
-        "FROM brazil_car_fleet.gold.frota_crescimento_mom_por_combustivel\n",
+        "FROM gold.frota_crescimento_mom_por_combustivel\n",
         "WHERE nm_grupo NOT IN ('Não Identificado', 'Combustão Renovável')\n",
         "ORDER BY reference_date, nm_grupo"
       ],
@@ -117,8 +128,8 @@
         "  nm_grupo,\n",
         "  qt_veiculos AS total_veiculos,\n",
         "  crescimento_yoy_pct / 100.0 AS yoy_growth_rate\n",
-        "FROM brazil_car_fleet.gold.frota_crescimento_yoy_por_combustivel_regiao\n",
-        "WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM brazil_car_fleet.gold.frota_crescimento_yoy_por_combustivel_regiao)\n",
+        "FROM gold.frota_crescimento_yoy_por_combustivel_regiao\n",
+        "WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM gold.frota_crescimento_yoy_por_combustivel_regiao)\n",
         "  AND nm_regiao IS NOT NULL\n",
         "  AND nm_grupo != 'Não Identificado'\n",
         "ORDER BY nm_regiao, nm_grupo"
@@ -128,19 +139,17 @@
     },
     {
       "name": "ds_top_municipios",
-      "displayName": "Top 10 municípios por frota geral",
+      "displayName": "Top 10 municípios por frota (último mês)",
       "queryLines": [
-        "SELECT\n",
+        "SELECT DISTINCT\n",
         "  nm_municipio,\n",
         "  sigla_uf,\n",
         "  nm_regiao,\n",
-        "  SUM(qt_veiculos_total) AS total_frota\n",
-        "FROM brazil_car_fleet.gold.frota_municipio_ranking\n",
-        "WHERE nm_municipio NOT IN ('SEM INFORMACAO', 'SEM INFORMAÇÃO', 'NAO IDENTIFICADO', 'NÃO IDENTIFICADO', 'NAO SE APLICA', 'VIDE/CAMPO/OBSERVACAO')\n",
-        "  AND sigla_uf IS NOT NULL\n",
-        "GROUP BY nm_municipio, sigla_uf, nm_regiao\n",
-        "ORDER BY total_frota DESC\n",
-        "LIMIT 10"
+        "  qt_frota_municipio AS total_frota,\n",
+        "  rank_geral\n",
+        "FROM gold.frota_municipio_ranking\n",
+        "WHERE rank_geral <= 10\n",
+        "ORDER BY rank_geral"
       ],
       "catalog": "brazil_car_fleet",
       "schema": "gold"
@@ -156,8 +165,8 @@
         "  qt_total,\n",
         "  qt_nao_identificado,\n",
         "  pct_nao_identificado / 100.0 AS pct_nao_identificado\n",
-        "FROM brazil_car_fleet.gold.frota_qualidade_dados\n",
-        "WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM brazil_car_fleet.gold.frota_qualidade_dados)\n",
+        "FROM gold.frota_qualidade_dados\n",
+        "WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM gold.frota_qualidade_dados)\n",
         "  AND sigla_uf IS NOT NULL\n",
         "ORDER BY pct_nao_identificado DESC"
       ],
@@ -172,7 +181,7 @@
         "  SELECT\n",
         "    MIN(dt_referencia) AS min_dt,\n",
         "    MAX(dt_referencia) AS max_dt\n",
-        "  FROM brazil_car_fleet.gold.frota_eletrica_e_hibrida_evolucao\n",
+        "  FROM gold.frota_eletrica_e_hibrida_evolucao\n",
         "  WHERE nm_regiao IS NOT NULL\n",
         "),\n",
         "regional AS (\n",
@@ -180,7 +189,7 @@
         "    dt_referencia,\n",
         "    nm_regiao,\n",
         "    SUM(qt_veiculos) AS total_ev_hybrid\n",
-        "  FROM brazil_car_fleet.gold.frota_eletrica_e_hibrida_evolucao\n",
+        "  FROM gold.frota_eletrica_e_hibrida_evolucao\n",
         "  WHERE nm_regiao IS NOT NULL\n",
         "  GROUP BY dt_referencia, nm_regiao\n",
         "),\n",
@@ -216,7 +225,7 @@
       "displayName": "Ranking de estados com mais EV/Híbridos",
       "queryLines": [
         "WITH latest AS (\n",
-        "  SELECT MAX(dt_referencia) AS max_dt FROM brazil_car_fleet.gold.frota_eletrica_e_hibrida_evolucao\n",
+        "  SELECT MAX(dt_referencia) AS max_dt FROM gold.frota_eletrica_e_hibrida_evolucao\n",
         "),\n",
         "agg AS (\n",
         "  SELECT\n",
@@ -226,7 +235,7 @@
         "    SUM(CASE WHEN nm_grupo = 'Elétrico Puro' THEN qt_veiculos ELSE 0 END) AS veiculos_eletricos_puros,\n",
         "    SUM(CASE WHEN nm_grupo = 'Híbrido' THEN qt_veiculos ELSE 0 END) AS veiculos_hibridos,\n",
         "    SUM(qt_veiculos) AS total_eletricos_hibridos\n",
-        "  FROM brazil_car_fleet.gold.frota_eletrica_e_hibrida_evolucao\n",
+        "  FROM gold.frota_eletrica_e_hibrida_evolucao\n",
         "  WHERE dt_referencia = (SELECT max_dt FROM latest)\n",
         "    AND sigla_uf IS NOT NULL\n",
         "  GROUP BY sigla_uf, nm_uf, nm_regiao\n",
@@ -304,7 +313,7 @@
                 }
               },
               "frame": {
-                "title": "Frota Total Nacional",
+                "title": "Frota Total Nacional (Último Mês)",
                 "showTitle": true
               }
             }
@@ -312,7 +321,7 @@
           "position": {
             "x": 0,
             "y": 2,
-            "width": 4,
+            "width": 3,
             "height": 3
           }
         },
@@ -357,9 +366,9 @@
             }
           },
           "position": {
-            "x": 4,
+            "x": 3,
             "y": 2,
-            "width": 4,
+            "width": 3,
             "height": 3
           }
         },
@@ -404,9 +413,59 @@
             }
           },
           "position": {
-            "x": 8,
+            "x": 6,
             "y": 2,
-            "width": 4,
+            "width": 3,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "kpi-referencia",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_referencia",
+                  "fields": [
+                    {
+                      "name": "mes_referencia",
+                      "expression": "`mes_referencia`"
+                    },
+                    {
+                      "name": "ultima_ingestao",
+                      "expression": "`ultima_ingestao`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "mes_referencia",
+                    "displayName": "Mês de referência"
+                  },
+                  {
+                    "fieldName": "ultima_ingestao",
+                    "displayName": "Última ingestão"
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Referência dos Dados",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 9,
+            "y": 2,
+            "width": 3,
             "height": 3
           }
         },
@@ -462,7 +521,7 @@
                 }
               },
               "frame": {
-                "title": "Crescimento Acumulado da Frota Geral por Região",
+                "title": "Crescimento Acumulado da Frota Geral por Região (Primeiro vs. Último Mês)",
                 "showTitle": true
               }
             }
@@ -807,7 +866,7 @@
                 ]
               },
               "frame": {
-                "title": "Top 10 Municípios com Maior Frota Geral (IBGE)",
+                "title": "Top 10 Municípios com Maior Frota (Último Mês)",
                 "showTitle": true
               }
             }
@@ -951,7 +1010,7 @@
                 }
               },
               "frame": {
-                "title": "Crescimento Acumulado da Frota Elétrica e Híbrida por Região (2024-2026)",
+                "title": "Crescimento Acumulado da Frota Elétrica e Híbrida por Região (Primeiro vs. Último Mês)",
                 "showTitle": true
               }
             }
