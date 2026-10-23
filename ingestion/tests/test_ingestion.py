@@ -1,10 +1,23 @@
 import datetime
 
+import pandas as pd
 import pytest
 
 import extract_fleet
 from extract_fleet import get_target_previous_period, parse_period_from_filename
+from load import drop_total_rows
 from validate import normalize_column_name
+
+
+def test_drop_total_rows_remove_rodape_de_total():
+    df = pd.DataFrame({
+        "uf": ["SAO PAULO", None, None],
+        "municipio": ["SAO PAULO", None, "X"],
+        "combustivel_veiculo": ["GASOLINA", None, None],
+        "qtd_veiculos": [10, 135907590, 1],
+    })
+    out = drop_total_rows(df)
+    assert out["qtd_veiculos"].tolist() == [10, 1]
 
 
 @pytest.mark.parametrize(

@@ -60,6 +60,14 @@ def new_result() -> dict[str, list[str]]:
     return {"uploaded": [], "skipped": [], "failed": []}
 
 
+def drop_total_rows(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove o rodapé de total (UF, município e combustível vazios) que alguns arquivos da Senatran trazem."""
+    total_rows = df[["uf", "municipio", "combustivel_veiculo"]].isna().all(axis=1)
+    if total_rows.any():
+        print(f"     ℹ️  Removendo {total_rows.sum()} linha(s) de total sem UF/município/combustível")
+    return df[~total_rows].copy()
+
+
 # ──────────────────────────────────────────────────────────────────
 # Upload individual
 # ──────────────────────────────────────────────────────────────────
@@ -109,6 +117,7 @@ def load_single_file(
         return False
 
     df = df[COLUMN_ORDER]
+    df = drop_total_rows(df)
     # Int64 (nullable) evita que um único nulo transforme a coluna em float ("123.0"),
     # o que faria o schema LongType da bronze ler a quantidade como NULL
     df["qtd_veiculos"] = pd.to_numeric(df["qtd_veiculos"], errors="coerce").astype("Int64")
