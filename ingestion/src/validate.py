@@ -16,7 +16,6 @@ Uso programático:
 """
 
 import argparse
-import io
 import os
 import sys
 import unicodedata
@@ -26,9 +25,8 @@ from enum import Enum
 import pandas as pd
 
 # Garante encoding UTF-8 no console Windows
-if sys.stdout.encoding != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 
 # ──────────────────────────────────────────────────────────────────
