@@ -44,7 +44,7 @@ Este projeto implementa uma plataforma corporativa de dados orientada a eventos 
 |---|---|---|
 | **Crescimento de Eletrificados (jan/2024 → set/2026)** | **+337% (Brasil)** | De 305 mil para **1,33 milhão**; **+84%** em 12 meses. Mais rápido no **Norte** (+496%) e **Nordeste** (+448%) |
 | **Taxa de Eletrificação** | **0,98%** | Elétricos puros + híbridos sobre a frota total em set/2026 (era 0,25% em jan/2024) |
-| **Maior Taxa de Eletrificação** | **Distrito Federal (DF)** | **3,76%** da frota, quase 4× a média nacional; AL (1,20%) e AM (1,06%) vêm a seguir |
+| **Maior Taxa de Eletrificação (entre as UFs)** | **Distrito Federal (DF)** | **3,76%** da frota, quase 4× a média nacional; AL (1,20%) e AM (1,06%) vêm a seguir |
 | **Maior Frota Eletrificada** | **São Paulo (SP)** | **372 mil veículos** (97 mil elétricos puros + 275 mil híbridos), seguido de MG (101 mil) e DF (87 mil) |
 | **Concentração da Frota Total** | **Região Sudeste** | **45,7%** dos veículos do país (2,3% estão com UF não identificada na fonte) |
 
@@ -62,7 +62,7 @@ Este projeto implementa uma plataforma corporativa de dados orientada a eventos 
  ┌────────────────────────┐
  │  GitHub Actions / uv   │  (Ingestão agendada todo dia 15 ou sob demanda)
  └───────────┬────────────┘
-             │ 1. Download do Senatran, validação de schema e upload em CSV
+             │ 1. Download (Senatran + Receita Federal), validação de schema e upload em CSV
              ▼
  ┌────────────────────────────────────────────────────────────────────────┐
  │  Unity Catalog Volume (/Volumes/.../fleet_raw/)                        │
@@ -125,6 +125,15 @@ brazil_car_fleet (catalog)
     └── qualidade_combustiveis_sem_mapeamento       ← Combustíveis fora do seed de grupos
 ```
 
+### Decisões de modelagem
+
+- **Frota é estoque:** `qt_veiculos` é a frota registrada no mês. Soma-se entre municípios e combustíveis, nunca entre meses; indicadores "atuais" usam o último mês.
+- **Um lote por mês:** quando o mesmo mês chega em mais de um arquivo (planilha anual, cópia, republicação), vale só o arquivo mais recente. Reenviar um arquivo substitui o mês.
+- **Municípios pelo código IBGE:** grafias da Senatran são casadas com o cadastro da Receita Federal (nome, código TOM e de-paras versionados em `seeds/`); o que não casa vai para o membro "não identificado" e aparece na página de qualidade.
+- **Penetração** = eletrificados ÷ frota total, somando numerador e denominador (nunca a média de percentuais).
+
+Detalhes de cada tabela e coluna em [`project.md`](project.md).
+
 ---
 
 ## 📁 Estrutura do Repositório
@@ -137,16 +146,19 @@ frota-veiculos-brasil/
 │   └── ingestion_monthly.yml    # Ingestão mensal agendada via Service Principal
 │
 ├── assets/
-│   └── dashboard.pdf              # Export do Dashboard Lakeview
+│   ├── dashboard.png                # Prévia do Dashboard Lakeview
+│   └── dashboard.pdf                # Export completo do Dashboard
 │
 ├── ingestion/                       # Módulo de Extração e Ingestão em Python
 │   ├── Dockerfile                   # Imagem Docker conteinerizada (Python 3.13 + uv)
-│   ├── pyproject.toml / uv.lock     # Gerenciamento de dependências ultra-rápido
-│   └── src/
-│       ├── extract_fleet.py         # Scraping e download de dados do Senatran
-│       ├── extract_municipios.py    # Download territorial da Receita Federal
-│       ├── validate.py              # Validação de schema e integridade pré-carga
-│       └── load.py                  # Upload streaming para Volumes do Unity Catalog
+│   ├── pyproject.toml / uv.lock     # Dependências, ruff e pytest
+│   ├── src/
+│   │   ├── extract_fleet.py         # Scraping e download de dados do Senatran
+│   │   ├── extract_municipios.py    # Download territorial da Receita Federal
+│   │   ├── validate.py              # Validação de schema e integridade pré-carga
+│   │   ├── databricks_client.py     # Autenticação (Service Principal ou token) e caminhos dos Volumes
+│   │   └── load.py                  # Ponto de entrada: extrai, valida e grava no Volume
+│   └── tests/                       # Testes da ingestão e da consistência dos seeds
 │
 ├── databricks/                      # Infraestrutura como Código (DAB)
 │   ├── databricks.yml               # Definição dos targets dev e prod
@@ -156,6 +168,7 @@ frota-veiculos-brasil/
 │       ├── seeds/                   # De-paras versionados (UF/região, combustível, correções de município)
 │       └── dashboard/               # Especificação JSON do AI/BI Dashboard
 │
+├── AGENTS.md                        # Padrões do projeto para agentes de código (CLAUDE.md importa este arquivo)
 ├── project.md                       # Especificação técnica e arquitetura de dados
 └── README.md                        # Documentação executiva do projeto
 ```
@@ -165,8 +178,8 @@ frota-veiculos-brasil/
 ## 🛠️ Como Executar o Projeto
 
 ### Pré-requisitos
-- Python 3.11+ e [uv](https://docs.astral.sh/uv/)
-- [Databricks CLI](https://docs.databricks.com/dev-tools/cli/index.html) (`>= 0.288.0`)
+- Python 3.13+ e [uv](https://docs.astral.sh/uv/)
+- [Databricks CLI](https://docs.databricks.com/dev-tools/cli/index.html) (v1.14.0, a mesma do CI)
 - Docker (opcional)
 
 ### 1. Ingestão de Dados Local
@@ -205,9 +218,11 @@ databricks bundle validate --target dev
 # Fazer o deploy no catálogo de desenvolvimento
 databricks bundle deploy --target dev
 
-# Disparar o workflow sob demanda
-databricks bundle run orchestration_frota --target dev
+# Rodar o pipeline sob demanda (ou o job completo: orchestration_frota)
+databricks bundle run pipeline_frota --target dev
 ```
+
+Produção não é publicada da máquina local: o deploy de `prod` roda só pelo GitHub Actions, com o Service Principal (veja abaixo).
 
 ---
 
@@ -216,7 +231,10 @@ databricks bundle run orchestration_frota --target dev
 A plataforma conta com automação completa via **GitHub Actions**:
 
 1. **`ci_validation.yml` (Pull Requests):** Lint (`ruff`), testes (`pytest`, incluindo a consistência dos seeds do pipeline) e `databricks bundle validate` em `dev` e `prod`.
-2. **`deploy_prod.yml` (Deploy em Produção):** Disparado automaticamente no merge para a branch `main`, executando `databricks bundle deploy --target prod` via Service Principal (OAuth M2M).
+2. **`deploy_prod.yml` (Deploy em Produção):** Disparado automaticamente no merge para a branch `main`, executando `databricks bundle deploy --target prod` via Service Principal (OAuth M2M). O deploy automático não aprova ações destrutivas nem roda o pipeline; o disparo manual tem as opções `auto_approve` (apagar/recriar recursos) e `run_pipeline` (necessária quando o merge cria ou altera tabelas):
+   ```bash
+   gh workflow run deploy_prod.yml -f run_pipeline=true
+   ```
 3. **`ingestion_monthly.yml` (Ingestão Agendada):** Execução no dia 15 de cada mês (mês mais recente publicado) ou manual com modo `previous-month`, `month` ou `year`; atualiza também o cadastro de municípios da Receita Federal.
 
 ---
@@ -229,7 +247,9 @@ Cadastre em **Settings ➔ Secrets and variables ➔ Actions**:
 |---|---|---|
 | `DATABRICKS_HOST` | URL do workspace Databricks | `https://dbc-xxxx.cloud.databricks.com/` |
 | `DATABRICKS_CLIENT_ID` | Application ID do Service Principal | `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
-| `DATABRICKS_CLIENT_SECRET` | OAuth Secret gerado no Databricks | `dapixxxxxxxxxxxxxxxxxxxxxxxx` |
+| `DATABRICKS_CLIENT_SECRET` | OAuth Secret gerado no Databricks | `dosexxxxxxxxxxxxxxxxxxxxxxxx` |
+
+Opcionais na ingestão: `DATABRICKS_TOKEN` (alternativa ao Service Principal), `DATABRICKS_CATALOG` (padrão `brazil_car_fleet`), `DATABRICKS_RAW_SCHEMA` (`raw_data`) e `DATABRICKS_FLEET_VOLUME` (`fleet_raw`).
 
 ---
 
