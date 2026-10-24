@@ -1,273 +1,236 @@
 {
   "datasets": [
     {
-      "name": "ds_ev_penetration",
-      "displayName": "EV and hybrid penetration",
+      "name": "ds_kpi_atual",
+      "displayName": "Eletrificação por UF — último mês",
       "queryLines": [
-        "WITH totals AS (\n",
-        "  SELECT\n",
-        "    dt_referencia,\n",
-        "    nr_ano,\n",
-        "    nr_mes,\n",
-        "    SUM(qt_veiculos) AS total_veiculos,\n",
-        "    SUM(CASE WHEN nm_grupo IN ('Elétrico Puro', 'Híbrido') THEN qt_veiculos ELSE 0 END) AS veiculos_eletricos_hibridos\n",
-        "  FROM gold.frota_por_grupo_combustivel_regiao\n",
-        "  GROUP BY dt_referencia, nr_ano, nr_mes\n",
-        ")\n",
         "SELECT\n",
-        "  dt_referencia AS reference_date,\n",
-        "  nr_ano,\n",
-        "  nr_mes,\n",
-        "  veiculos_eletricos_hibridos,\n",
-        "  total_veiculos,\n",
-        "  veiculos_eletricos_hibridos / NULLIF(total_veiculos, 0) AS penetration_rate\n",
-        "FROM totals\n",
-        "ORDER BY reference_date"
+        "  dt_referencia,\n",
+        "  sigla_uf,\n",
+        "  nm_uf,\n",
+        "  nm_regiao,\n",
+        "  qt_total,\n",
+        "  qt_eletrico,\n",
+        "  qt_hibrido,\n",
+        "  qt_eletrificados,\n",
+        "  qt_total_ano_anterior,\n",
+        "  qt_eletrificados_ano_anterior,\n",
+        "  pct_penetracao\n",
+        "FROM frota_eletrificacao_uf_mensal\n",
+        "WHERE fl_ultimo_mes\n",
+        "ORDER BY pct_penetracao DESC"
       ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
-    },
-    {
-      "name": "ds_ev_latest",
-      "displayName": "Latest EV and hybrid penetration",
-      "queryLines": [
-        "WITH totals AS (\n",
-        "  SELECT\n",
-        "    dt_referencia,\n",
-        "    SUM(qt_veiculos) AS total_veiculos,\n",
-        "    SUM(CASE WHEN nm_grupo IN ('Elétrico Puro', 'Híbrido') THEN qt_veiculos ELSE 0 END) AS veiculos_eletricos_hibridos\n",
-        "  FROM gold.frota_por_grupo_combustivel_regiao\n",
-        "  WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM gold.frota_por_grupo_combustivel_regiao)\n",
-        "  GROUP BY dt_referencia\n",
-        ")\n",
-        "SELECT\n",
-        "  veiculos_eletricos_hibridos,\n",
-        "  total_veiculos,\n",
-        "  veiculos_eletricos_hibridos / NULLIF(total_veiculos, 0) AS penetration_rate\n",
-        "FROM totals"
-      ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
+      "columns": [
+        {
+          "displayName": "penetracao",
+          "description": "Eletrificados / frota total",
+          "expression": "SUM(`qt_eletrificados`) / SUM(`qt_total`)"
+        },
+        {
+          "displayName": "penetracao_ano_anterior",
+          "description": "Penetração 12 meses antes",
+          "expression": "SUM(`qt_eletrificados_ano_anterior`) / SUM(`qt_total_ano_anterior`)"
+        }
+      ]
     },
     {
       "name": "ds_referencia",
       "displayName": "Mês de referência e última ingestão",
       "queryLines": [
         "SELECT\n",
-        "  (SELECT date_format(MAX(dt_referencia), 'MM/yyyy') FROM gold.frota_por_grupo_combustivel_regiao) AS mes_referencia,\n",
-        "  (SELECT MAX(dt_ingestao) FROM silver.fato_frota) AS ultima_ingestao"
-      ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
+        "  date_format(MAX(dt_referencia), 'MM/yyyy') AS mes_referencia,\n",
+        "  MAX(dt_ingestao_vigente) AS ultima_ingestao\n",
+        "FROM qualidade_volume_mensal"
+      ]
     },
     {
-      "name": "ds_fleet_growth",
-      "displayName": "Fleet growth by region",
+      "name": "ds_uf_mensal",
+      "displayName": "Eletrificação por UF e mês",
       "queryLines": [
         "SELECT\n",
-        "  nm_regiao,\n",
-        "  qt_frota_inicio AS frota_inicio,\n",
-        "  qt_frota_fim AS frota_fim,\n",
-        "  crescimento_absoluto,\n",
-        "  crescimento_pct / 100.0 AS growth_rate\n",
-        "FROM gold.frota_crescimento_por_regiao\n",
-        "WHERE nm_regiao IS NOT NULL\n",
-        "ORDER BY growth_rate DESC"
-      ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
-    },
-    {
-      "name": "ds_regional_concentration",
-      "displayName": "Regional concentration",
-      "queryLines": [
-        "WITH latest AS (\n",
-        "  SELECT MAX(dt_referencia) AS max_dt FROM gold.frota_por_grupo_combustivel_regiao\n",
-        "),\n",
-        "reg AS (\n",
-        "  SELECT\n",
-        "    nm_regiao,\n",
-        "    SUM(qt_veiculos) AS frota_regional\n",
-        "  FROM gold.frota_por_grupo_combustivel_regiao\n",
-        "  WHERE dt_referencia = (SELECT max_dt FROM latest)\n",
-        "    AND nm_regiao IS NOT NULL\n",
-        "  GROUP BY nm_regiao\n",
-        ")\n",
-        "SELECT\n",
-        "  nm_regiao,\n",
-        "  frota_regional,\n",
-        "  frota_regional / (SELECT SUM(frota_regional) FROM reg) AS national_share\n",
-        "FROM reg\n",
-        "ORDER BY frota_regional DESC"
-      ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
-    },
-    {
-      "name": "ds_mom_growth",
-      "displayName": "Monthly growth by fuel group",
-      "queryLines": [
-        "SELECT\n",
-        "  dt_referencia AS reference_date,\n",
-        "  nm_grupo,\n",
-        "  qt_veiculos AS total_veiculos,\n",
-        "  crescimento_mom_pct / 100.0 AS mom_growth_rate\n",
-        "FROM gold.frota_crescimento_mom_por_combustivel\n",
-        "WHERE nm_grupo NOT IN ('Não Identificado', 'Combustão Renovável')\n",
-        "ORDER BY reference_date, nm_grupo"
-      ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
-    },
-    {
-      "name": "ds_yoy_growth_latest",
-      "displayName": "Latest annual growth by fuel and region",
-      "queryLines": [
-        "SELECT\n",
-        "  nm_regiao,\n",
-        "  nm_grupo,\n",
-        "  qt_veiculos AS total_veiculos,\n",
-        "  crescimento_yoy_pct / 100.0 AS yoy_growth_rate\n",
-        "FROM gold.frota_crescimento_yoy_por_combustivel_regiao\n",
-        "WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM gold.frota_crescimento_yoy_por_combustivel_regiao)\n",
-        "  AND nm_regiao IS NOT NULL\n",
-        "  AND nm_grupo != 'Não Identificado'\n",
-        "ORDER BY nm_regiao, nm_grupo"
-      ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
-    },
-    {
-      "name": "ds_top_municipios",
-      "displayName": "Top 10 municípios por frota (último mês)",
-      "queryLines": [
-        "SELECT DISTINCT\n",
-        "  nm_municipio,\n",
-        "  sigla_uf,\n",
-        "  nm_regiao,\n",
-        "  qt_frota_municipio AS total_frota,\n",
-        "  rank_geral\n",
-        "FROM gold.frota_municipio_ranking\n",
-        "WHERE rank_geral <= 10\n",
-        "ORDER BY rank_geral"
-      ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
-    },
-    {
-      "name": "ds_qualidade_dados",
-      "displayName": "Qualidade de dados por estado",
-      "queryLines": [
-        "SELECT\n",
+        "  dt_referencia,\n",
         "  sigla_uf,\n",
         "  nm_uf,\n",
         "  nm_regiao,\n",
         "  qt_total,\n",
-        "  qt_nao_identificado,\n",
-        "  pct_nao_identificado / 100.0 AS pct_nao_identificado\n",
-        "FROM gold.frota_qualidade_dados\n",
-        "WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM gold.frota_qualidade_dados)\n",
-        "  AND sigla_uf IS NOT NULL\n",
-        "ORDER BY pct_nao_identificado DESC"
+        "  qt_eletrico,\n",
+        "  qt_hibrido,\n",
+        "  qt_eletrificados\n",
+        "FROM frota_eletrificacao_uf_mensal\n",
+        "ORDER BY dt_referencia"
       ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
+      "columns": [
+        {
+          "displayName": "penetracao",
+          "description": "Eletrificados / frota total",
+          "expression": "SUM(`qt_eletrificados`) / SUM(`qt_total`)"
+        }
+      ]
     },
     {
-      "name": "ds_ev_growth_by_region",
-      "displayName": "Crescimento acumulado EV/Híbridos por região",
+      "name": "ds_grupo_mensal",
+      "displayName": "Frota por grupo, UF e mês",
       "queryLines": [
-        "WITH periods AS (\n",
-        "  SELECT\n",
-        "    MIN(dt_referencia) AS min_dt,\n",
-        "    MAX(dt_referencia) AS max_dt\n",
-        "  FROM gold.frota_eletrica_e_hibrida_evolucao\n",
-        "  WHERE nm_regiao IS NOT NULL\n",
-        "),\n",
-        "regional AS (\n",
-        "  SELECT\n",
-        "    dt_referencia,\n",
-        "    nm_regiao,\n",
-        "    SUM(qt_veiculos) AS total_ev_hybrid\n",
-        "  FROM gold.frota_eletrica_e_hibrida_evolucao\n",
-        "  WHERE nm_regiao IS NOT NULL\n",
-        "  GROUP BY dt_referencia, nm_regiao\n",
-        "),\n",
-        "inicio AS (\n",
-        "  SELECT\n",
-        "    nm_regiao,\n",
-        "    total_ev_hybrid AS frota_inicio\n",
-        "  FROM regional\n",
-        "  WHERE dt_referencia = (SELECT min_dt FROM periods)\n",
-        "),\n",
-        "fim AS (\n",
-        "  SELECT\n",
-        "    nm_regiao,\n",
-        "    total_ev_hybrid AS frota_fim\n",
-        "  FROM regional\n",
-        "  WHERE dt_referencia = (SELECT max_dt FROM periods)\n",
-        ")\n",
         "SELECT\n",
-        "  i.nm_regiao,\n",
-        "  i.frota_inicio,\n",
-        "  f.frota_fim,\n",
-        "  (f.frota_fim - i.frota_inicio) AS crescimento_absoluto,\n",
-        "  (f.frota_fim - i.frota_inicio) / NULLIF(i.frota_inicio, 0) AS growth_rate\n",
-        "FROM inicio i\n",
-        "JOIN fim f ON i.nm_regiao = f.nm_regiao\n",
-        "ORDER BY growth_rate DESC"
-      ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
-    },
-    {
-      "name": "ds_ranking_estados_ev",
-      "displayName": "Ranking de estados com mais EV/Híbridos",
-      "queryLines": [
-        "WITH latest AS (\n",
-        "  SELECT MAX(dt_referencia) AS max_dt FROM gold.frota_eletrica_e_hibrida_evolucao\n",
-        "),\n",
-        "agg AS (\n",
-        "  SELECT\n",
-        "    sigla_uf,\n",
-        "    nm_uf,\n",
-        "    nm_regiao,\n",
-        "    SUM(CASE WHEN nm_grupo = 'Elétrico Puro' THEN qt_veiculos ELSE 0 END) AS veiculos_eletricos_puros,\n",
-        "    SUM(CASE WHEN nm_grupo = 'Híbrido' THEN qt_veiculos ELSE 0 END) AS veiculos_hibridos,\n",
-        "    SUM(qt_veiculos) AS total_eletricos_hibridos\n",
-        "  FROM gold.frota_eletrica_e_hibrida_evolucao\n",
-        "  WHERE dt_referencia = (SELECT max_dt FROM latest)\n",
-        "    AND sigla_uf IS NOT NULL\n",
-        "  GROUP BY sigla_uf, nm_uf, nm_regiao\n",
-        ")\n",
-        "SELECT\n",
+        "  dt_referencia,\n",
         "  sigla_uf,\n",
         "  nm_uf,\n",
         "  nm_regiao,\n",
-        "  veiculos_eletricos_puros,\n",
-        "  veiculos_hibridos,\n",
-        "  total_eletricos_hibridos,\n",
-        "  RANK() OVER (ORDER BY total_eletricos_hibridos DESC) AS rank_nacional\n",
-        "FROM agg\n",
-        "ORDER BY total_eletricos_hibridos DESC"
-      ],
-      "catalog": "brazil_car_fleet",
-      "schema": "gold"
+        "  nm_grupo,\n",
+        "  qt_veiculos\n",
+        "FROM frota_mensal_uf_grupo\n",
+        "ORDER BY dt_referencia"
+      ]
+    },
+    {
+      "name": "ds_adicionados",
+      "displayName": "Veículos eletrificados adicionados por mês",
+      "queryLines": [
+        "SELECT\n",
+        "  dt_referencia,\n",
+        "  nm_grupo,\n",
+        "  qt_adicionados\n",
+        "FROM frota_crescimento_mom_por_combustivel\n",
+        "WHERE nm_grupo IN ('Elétrico Puro', 'Híbrido')\n",
+        "ORDER BY dt_referencia"
+      ]
+    },
+    {
+      "name": "ds_yoy_atual",
+      "displayName": "Crescimento YoY por região e grupo — último mês",
+      "queryLines": [
+        "SELECT\n",
+        "  nm_regiao,\n",
+        "  nm_grupo,\n",
+        "  crescimento_yoy_pct / 100.0 AS crescimento_yoy\n",
+        "FROM frota_crescimento_yoy_por_combustivel_regiao\n",
+        "WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM frota_crescimento_yoy_por_combustivel_regiao)\n",
+        "  AND nm_regiao IS NOT NULL\n",
+        "  AND nm_grupo <> 'Não Identificado'"
+      ]
+    },
+    {
+      "name": "ds_crescimento_regiao",
+      "displayName": "Crescimento acumulado por região",
+      "queryLines": [
+        "SELECT nm_regiao, 'Frota total' AS tipo_frota, crescimento_pct / 100.0 AS crescimento, periodo_inicio, periodo_fim\n",
+        "FROM frota_crescimento_por_regiao\n",
+        "UNION ALL\n",
+        "SELECT nm_regiao, 'Eletrificados' AS tipo_frota, crescimento_pct / 100.0 AS crescimento, periodo_inicio, periodo_fim\n",
+        "FROM frota_eletrificada_crescimento_por_regiao"
+      ]
+    },
+    {
+      "name": "ds_municipios_frota",
+      "displayName": "Municípios por frota — último mês",
+      "queryLines": [
+        "SELECT\n",
+        "  rank_frota,\n",
+        "  nm_municipio,\n",
+        "  sigla_uf,\n",
+        "  nm_uf,\n",
+        "  nm_regiao,\n",
+        "  qt_total,\n",
+        "  qt_eletrificados,\n",
+        "  pct_penetracao\n",
+        "FROM frota_municipio_atual\n",
+        "ORDER BY rank_frota"
+      ]
+    },
+    {
+      "name": "ds_municipios_penetracao",
+      "displayName": "Municípios por penetração — último mês (frota >= 10 mil)",
+      "queryLines": [
+        "SELECT\n",
+        "  rank_penetracao,\n",
+        "  nm_municipio,\n",
+        "  sigla_uf,\n",
+        "  nm_uf,\n",
+        "  nm_regiao,\n",
+        "  qt_total,\n",
+        "  qt_eletrificados,\n",
+        "  pct_penetracao\n",
+        "FROM frota_municipio_atual\n",
+        "WHERE fl_frota_minima\n",
+        "ORDER BY rank_penetracao"
+      ]
+    },
+    {
+      "name": "ds_qualidade_mensal",
+      "displayName": "Qualidade — volume mensal",
+      "queryLines": [
+        "SELECT\n",
+        "  dt_referencia,\n",
+        "  total_veiculos,\n",
+        "  variacao_pct / 100.0 AS variacao,\n",
+        "  qt_lotes,\n",
+        "  qt_linhas_rejeitadas,\n",
+        "  CASE WHEN fl_periodo_duplicado THEN 1 ELSE 0 END AS qt_periodo_duplicado,\n",
+        "  CASE WHEN fl_anomalia_volume THEN 'Sim' ELSE 'Não' END AS anomalia_volume,\n",
+        "  nm_arquivo_vigente,\n",
+        "  nm_arquivos_fonte,\n",
+        "  dt_ingestao_vigente\n",
+        "FROM qualidade_volume_mensal\n",
+        "ORDER BY dt_referencia DESC"
+      ]
+    },
+    {
+      "name": "ds_quarentena",
+      "displayName": "Qualidade — quarentena",
+      "queryLines": [
+        "SELECT\n",
+        "  nm_arquivo_fonte,\n",
+        "  motivo_rejeicao,\n",
+        "  COUNT(*) AS qt_linhas,\n",
+        "  SUM(qtd_veiculos) AS qt_veiculos\n",
+        "FROM bronze.frota_quarentena\n",
+        "GROUP BY nm_arquivo_fonte, motivo_rejeicao\n",
+        "ORDER BY qt_linhas DESC"
+      ]
+    },
+    {
+      "name": "ds_qualidade_uf",
+      "displayName": "Qualidade — combustível não identificado por UF (último mês)",
+      "queryLines": [
+        "SELECT\n",
+        "  COALESCE(sigla_uf, 'ND') AS sigla_uf,\n",
+        "  nm_uf,\n",
+        "  COALESCE(nm_regiao, 'Não identificada') AS nm_regiao,\n",
+        "  qt_total,\n",
+        "  qt_nao_identificado,\n",
+        "  pct_nao_identificado / 100.0 AS pct_nao_identificado\n",
+        "FROM frota_qualidade_dados\n",
+        "WHERE dt_referencia = (SELECT MAX(dt_referencia) FROM frota_qualidade_dados)\n",
+        "ORDER BY pct_nao_identificado DESC"
+      ]
+    },
+    {
+      "name": "ds_pendencias",
+      "displayName": "Qualidade — pendências de mapeamento",
+      "queryLines": [
+        "SELECT 'Município sem código IBGE' AS tipo, CONCAT(nm_municipio_raw, ' / ', nm_uf_raw) AS item\n",
+        "FROM qualidade_municipios_sem_match\n",
+        "UNION ALL\n",
+        "SELECT 'Combustível sem grupo' AS tipo, nm_combustivel AS item\n",
+        "FROM qualidade_combustiveis_sem_mapeamento"
+      ]
     }
   ],
   "pages": [
     {
-      "name": "overview",
-      "displayName": "Visão Geral & KPIs",
+      "name": "visao-geral",
+      "displayName": "Visão Geral",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
       "layout": [
         {
           "widget": {
-            "name": "overview-header",
+            "name": "vg-header",
             "multilineTextboxSpec": {
               "lines": [
-                "# 🚗 Brazil Car Fleet Dashboard\n",
+                "# 🚗 Frota de Veículos do Brasil\n",
                 "\n",
-                "Monitoramento analítico da frota brasileira, transição energética (elétricos e híbridos) e crescimento regional. Dados processados via **Databricks Lakeflow Pipelines** na camada Gold."
+                "Frota registrada (SENATRAN), transição energética e crescimento regional. Frota é estoque: os indicadores mostram o último mês disponível, comparado ao mesmo mês do ano anterior."
               ]
             }
           },
@@ -280,19 +243,23 @@
         },
         {
           "widget": {
-            "name": "kpi-current-fleet",
+            "name": "vg-kpi-frota",
             "queries": [
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "ds_ev_latest",
+                  "datasetName": "ds_kpi_atual",
                   "fields": [
                     {
-                      "name": "total_veiculos",
-                      "expression": "`total_veiculos`"
+                      "name": "sum(qt_total)",
+                      "expression": "SUM(`qt_total`)"
+                    },
+                    {
+                      "name": "sum(qt_total_ano_anterior)",
+                      "expression": "SUM(`qt_total_ano_anterior`)"
                     }
                   ],
-                  "disaggregated": true
+                  "disaggregated": false
                 }
               }
             ],
@@ -301,19 +268,32 @@
               "widgetType": "counter",
               "encodings": {
                 "value": {
-                  "fieldName": "total_veiculos",
-                  "displayName": "Total da Frota",
+                  "fieldName": "sum(qt_total)",
+                  "displayName": "Frota total",
                   "format": {
                     "type": "number",
+                    "abbreviation": "compact",
                     "decimalPlaces": {
                       "type": "max",
-                      "places": 0
+                      "places": 1
+                    }
+                  }
+                },
+                "target": {
+                  "fieldName": "sum(qt_total_ano_anterior)",
+                  "displayName": "vs. 12 meses antes",
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
                     }
                   }
                 }
               },
               "frame": {
-                "title": "Frota Total Nacional (Último Mês)",
+                "title": "Frota Total (Último Mês)",
                 "showTitle": true
               }
             }
@@ -327,19 +307,23 @@
         },
         {
           "widget": {
-            "name": "kpi-ev-fleet",
+            "name": "vg-kpi-eletrificados",
             "queries": [
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "ds_ev_latest",
+                  "datasetName": "ds_kpi_atual",
                   "fields": [
                     {
-                      "name": "veiculos_eletricos_hibridos",
-                      "expression": "`veiculos_eletricos_hibridos`"
+                      "name": "sum(qt_eletrificados)",
+                      "expression": "SUM(`qt_eletrificados`)"
+                    },
+                    {
+                      "name": "sum(qt_eletrificados_ano_anterior)",
+                      "expression": "SUM(`qt_eletrificados_ano_anterior`)"
                     }
                   ],
-                  "disaggregated": true
+                  "disaggregated": false
                 }
               }
             ],
@@ -348,19 +332,32 @@
               "widgetType": "counter",
               "encodings": {
                 "value": {
-                  "fieldName": "veiculos_eletricos_hibridos",
-                  "displayName": "Elétricos + Híbridos",
+                  "fieldName": "sum(qt_eletrificados)",
+                  "displayName": "Eletrificados",
                   "format": {
                     "type": "number",
+                    "abbreviation": "compact",
                     "decimalPlaces": {
                       "type": "max",
-                      "places": 0
+                      "places": 1
+                    }
+                  }
+                },
+                "target": {
+                  "fieldName": "sum(qt_eletrificados_ano_anterior)",
+                  "displayName": "vs. 12 meses antes",
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
                     }
                   }
                 }
               },
               "frame": {
-                "title": "Frota Elétrica e Híbrida",
+                "title": "Elétricos + Híbridos",
                 "showTitle": true
               }
             }
@@ -374,19 +371,23 @@
         },
         {
           "widget": {
-            "name": "kpi-ev-penetration",
+            "name": "vg-kpi-penetracao",
             "queries": [
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "ds_ev_latest",
+                  "datasetName": "ds_kpi_atual",
                   "fields": [
                     {
-                      "name": "penetration_rate",
-                      "expression": "`penetration_rate`"
+                      "name": "measure(penetracao)",
+                      "expression": "MEASURE(`penetracao`)"
+                    },
+                    {
+                      "name": "measure(penetracao_ano_anterior)",
+                      "expression": "MEASURE(`penetracao_ano_anterior`)"
                     }
                   ],
-                  "disaggregated": true
+                  "disaggregated": false
                 }
               }
             ],
@@ -395,8 +396,19 @@
               "widgetType": "counter",
               "encodings": {
                 "value": {
-                  "fieldName": "penetration_rate",
-                  "displayName": "Penetração EV/Híbridos",
+                  "fieldName": "measure(penetracao)",
+                  "displayName": "Penetração",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  }
+                },
+                "target": {
+                  "fieldName": "measure(penetracao_ano_anterior)",
+                  "displayName": "vs. 12 meses antes",
                   "format": {
                     "type": "number-percent",
                     "decimalPlaces": {
@@ -408,7 +420,9 @@
               },
               "frame": {
                 "title": "Taxa de Eletrificação",
-                "showTitle": true
+                "showTitle": true,
+                "description": "Eletrificados / frota total",
+                "showDescription": true
               }
             }
           },
@@ -421,7 +435,7 @@
         },
         {
           "widget": {
-            "name": "kpi-referencia",
+            "name": "vg-referencia",
             "queries": [
               {
                 "name": "main_query",
@@ -471,23 +485,121 @@
         },
         {
           "widget": {
-            "name": "chart-fleet-growth",
+            "name": "vg-composicao",
             "queries": [
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "ds_fleet_growth",
+                  "datasetName": "ds_grupo_mensal",
+                  "fields": [
+                    {
+                      "name": "monthly(dt_referencia)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `dt_referencia`)"
+                    },
+                    {
+                      "name": "sum(qt_veiculos)",
+                      "expression": "SUM(`qt_veiculos`)"
+                    },
+                    {
+                      "name": "nm_grupo",
+                      "expression": "`nm_grupo`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(dt_referencia)",
+                  "displayName": "Mês",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(qt_veiculos)",
+                  "displayName": "Participação",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "nm_grupo",
+                  "displayName": "Grupo",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Elétrico Puro",
+                        "color": "#009E73"
+                      },
+                      {
+                        "value": "Híbrido",
+                        "color": "#56B4E9"
+                      },
+                      {
+                        "value": "Flex",
+                        "color": "#E69F00"
+                      },
+                      {
+                        "value": "Combustão Fóssil",
+                        "color": "#5F6B73"
+                      },
+                      {
+                        "value": "Combustão Renovável",
+                        "color": "#CC79A7"
+                      },
+                      {
+                        "value": "Não Identificado",
+                        "color": "#C9CED2"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "title": "Composição da Frota por Grupo de Combustível",
+                "showTitle": true
+              },
+              "mark": {
+                "layout": "stack-100"
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "vg-crescimento-regiao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_crescimento_regiao",
                   "fields": [
                     {
                       "name": "nm_regiao",
                       "expression": "`nm_regiao`"
                     },
                     {
-                      "name": "growth_rate",
-                      "expression": "`growth_rate`"
+                      "name": "sum(crescimento)",
+                      "expression": "SUM(`crescimento`)"
+                    },
+                    {
+                      "name": "tipo_frota",
+                      "expression": "`tipo_frota`"
                     }
                   ],
-                  "disaggregated": true
+                  "disaggregated": false
                 }
               }
             ],
@@ -503,81 +615,34 @@
                   }
                 },
                 "y": {
-                  "fieldName": "growth_rate",
-                  "displayName": "Taxa de Crescimento",
-                  "scale": {
-                    "type": "quantitative"
-                  },
+                  "fieldName": "sum(crescimento)",
+                  "displayName": "Crescimento",
                   "format": {
                     "type": "number-percent",
                     "decimalPlaces": {
                       "type": "max",
                       "places": 1
                     }
-                  }
-                },
-                "label": {
-                  "show": true
-                }
-              },
-              "frame": {
-                "title": "Crescimento Acumulado da Frota Geral por Região (Primeiro vs. Último Mês)",
-                "showTitle": true
-              }
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 5,
-            "width": 6,
-            "height": 5
-          }
-        },
-        {
-          "widget": {
-            "name": "chart-regional-concentration",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "ds_regional_concentration",
-                  "fields": [
-                    {
-                      "name": "nm_regiao",
-                      "expression": "`nm_regiao`"
-                    },
-                    {
-                      "name": "national_share",
-                      "expression": "`national_share`"
-                    }
-                  ],
-                  "disaggregated": true
-                }
-              }
-            ],
-            "spec": {
-              "version": 3,
-              "widgetType": "pie",
-              "encodings": {
-                "angle": {
-                  "fieldName": "national_share",
-                  "displayName": "Participação Nacional",
+                  },
                   "scale": {
                     "type": "quantitative"
-                  },
-                  "format": {
-                    "type": "number-percent",
-                    "decimalPlaces": {
-                      "type": "max",
-                      "places": 1
-                    }
                   }
                 },
                 "color": {
-                  "fieldName": "nm_regiao",
-                  "displayName": "Região",
+                  "fieldName": "tipo_frota",
+                  "displayName": "Frota",
                   "scale": {
-                    "type": "categorical"
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Frota total",
+                        "color": "#5F6B73"
+                      },
+                      {
+                        "value": "Eletrificados",
+                        "color": "#009E73"
+                      }
+                    ]
                   }
                 },
                 "label": {
@@ -585,8 +650,13 @@
                 }
               },
               "frame": {
-                "title": "Concentração Regional da Frota",
-                "showTitle": true
+                "title": "Crescimento Acumulado por Região",
+                "showTitle": true,
+                "description": "Primeiro vs. último mês disponível",
+                "showDescription": true
+              },
+              "mark": {
+                "layout": "group"
               }
             }
           },
@@ -594,93 +664,363 @@
             "x": 6,
             "y": 5,
             "width": 6,
-            "height": 5
+            "height": 6
           }
         },
         {
           "widget": {
-            "name": "chart-ev-trend",
+            "name": "vg-frota-regiao",
             "queries": [
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "ds_ev_penetration",
+                  "datasetName": "ds_kpi_atual",
                   "fields": [
                     {
-                      "name": "reference_date",
-                      "expression": "`reference_date`"
+                      "name": "sum(qt_total)",
+                      "expression": "SUM(`qt_total`)"
                     },
                     {
-                      "name": "penetration_rate",
-                      "expression": "`penetration_rate`"
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
                     }
                   ],
-                  "disaggregated": true
+                  "disaggregated": false
                 }
               }
             ],
             "spec": {
               "version": 3,
-              "widgetType": "line",
+              "widgetType": "bar",
               "encodings": {
                 "x": {
-                  "fieldName": "reference_date",
-                  "displayName": "Mês de Referência",
+                  "fieldName": "sum(qt_total)",
+                  "displayName": "Frota",
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
                   "scale": {
-                    "type": "temporal"
+                    "type": "quantitative"
                   }
                 },
                 "y": {
-                  "fieldName": "penetration_rate",
-                  "displayName": "Penetração (%)",
+                  "fieldName": "nm_regiao",
+                  "displayName": "Região",
                   "scale": {
-                    "type": "quantitative"
-                  },
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value"
+                    }
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "title": "Frota por Região (Último Mês)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 6,
+            "height": 5
+          }
+        },
+        {
+          "widget": {
+            "name": "vg-penetracao-regiao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_kpi_atual",
+                  "fields": [
+                    {
+                      "name": "measure(penetracao)",
+                      "expression": "MEASURE(`penetracao`)"
+                    },
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "measure(penetracao)",
+                  "displayName": "Penetração",
                   "format": {
                     "type": "number-percent",
                     "decimalPlaces": {
                       "type": "max",
                       "places": 2
                     }
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "nm_regiao",
+                  "displayName": "Região",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value"
+                    }
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "title": "Taxa de Eletrificação por Região (Último Mês)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 11,
+            "width": 6,
+            "height": 5
+          }
+        }
+      ]
+    },
+    {
+      "name": "eletrificacao",
+      "displayName": "Eletrificação",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "el-header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## ⚡ Eletrificação\n",
+                "\n",
+                "Elétricos puros (inclui célula de combustível) e híbridos (inclui elétrico com fonte interna)."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "el-kpi-eletricos",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_kpi_atual",
+                  "fields": [
+                    {
+                      "name": "sum(qt_eletrico)",
+                      "expression": "SUM(`qt_eletrico`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(qt_eletrico)",
+                  "displayName": "Elétricos puros",
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
                   }
                 }
               },
               "frame": {
-                "title": "Evolução da Penetração de Veículos Elétricos e Híbridos",
+                "title": "Elétricos Puros (Último Mês)",
                 "showTitle": true
               }
             }
           },
           "position": {
             "x": 0,
-            "y": 10,
+            "y": 2,
             "width": 6,
-            "height": 5
+            "height": 3
           }
         },
         {
           "widget": {
-            "name": "chart-mom-growth",
+            "name": "el-kpi-hibridos",
             "queries": [
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "ds_mom_growth",
+                  "datasetName": "ds_kpi_atual",
                   "fields": [
                     {
-                      "name": "reference_date",
-                      "expression": "`reference_date`"
-                    },
-                    {
-                      "name": "nm_grupo",
-                      "expression": "`nm_grupo`"
-                    },
-                    {
-                      "name": "mom_growth_rate",
-                      "expression": "`mom_growth_rate`"
+                      "name": "sum(qt_hibrido)",
+                      "expression": "SUM(`qt_hibrido`)"
                     }
                   ],
-                  "disaggregated": true
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(qt_hibrido)",
+                  "displayName": "Híbridos",
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "title": "Híbridos (Último Mês)",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 2,
+            "width": 6,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "el-evolucao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_uf_mensal",
+                  "fields": [
+                    {
+                      "name": "monthly(dt_referencia)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `dt_referencia`)"
+                    },
+                    {
+                      "name": "sum(qt_eletrico)",
+                      "expression": "SUM(`qt_eletrico`)"
+                    },
+                    {
+                      "name": "sum(qt_hibrido)",
+                      "expression": "SUM(`qt_hibrido`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "area",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(dt_referencia)",
+                  "displayName": "Mês",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "scale": {
+                    "type": "quantitative"
+                  },
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "fields": [
+                    {
+                      "fieldName": "sum(qt_eletrico)",
+                      "displayName": "Elétricos puros"
+                    },
+                    {
+                      "fieldName": "sum(qt_hibrido)",
+                      "displayName": "Híbridos"
+                    }
+                  ]
+                }
+              },
+              "frame": {
+                "title": "Evolução da Frota Eletrificada",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "el-penetracao-regiao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_uf_mensal",
+                  "fields": [
+                    {
+                      "name": "monthly(dt_referencia)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `dt_referencia`)"
+                    },
+                    {
+                      "name": "measure(penetracao)",
+                      "expression": "MEASURE(`penetracao`)"
+                    },
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    }
+                  ],
+                  "disaggregated": false
                 }
               }
             ],
@@ -689,70 +1029,72 @@
               "widgetType": "line",
               "encodings": {
                 "x": {
-                  "fieldName": "reference_date",
-                  "displayName": "Mês de Referência",
+                  "fieldName": "monthly(dt_referencia)",
+                  "displayName": "Mês",
                   "scale": {
                     "type": "temporal"
                   }
                 },
                 "y": {
-                  "fieldName": "mom_growth_rate",
-                  "displayName": "Crescimento MoM (%)",
-                  "scale": {
-                    "type": "quantitative"
-                  },
+                  "fieldName": "measure(penetracao)",
+                  "displayName": "Penetração",
                   "format": {
                     "type": "number-percent",
                     "decimalPlaces": {
                       "type": "max",
-                      "places": 1
+                      "places": 2
                     }
+                  },
+                  "scale": {
+                    "type": "quantitative"
                   }
                 },
                 "color": {
-                  "fieldName": "nm_grupo",
-                  "displayName": "Grupo de Combustível",
+                  "fieldName": "nm_regiao",
+                  "displayName": "Região",
                   "scale": {
                     "type": "categorical"
                   }
                 }
               },
               "frame": {
-                "title": "Crescimento Mensal (MoM) por Grupo de Combustível",
-                "showTitle": true
+                "title": "Taxa de Eletrificação por Região",
+                "showTitle": true,
+                "description": "Eletrificados / frota total",
+                "showDescription": true
               }
             }
           },
           "position": {
             "x": 6,
-            "y": 10,
+            "y": 5,
             "width": 6,
-            "height": 5
+            "height": 6
           }
         },
         {
           "widget": {
-            "name": "chart-yoy-regional",
+            "name": "el-adicionados",
             "queries": [
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "ds_yoy_growth_latest",
+                  "datasetName": "ds_adicionados",
                   "fields": [
                     {
-                      "name": "nm_regiao",
-                      "expression": "`nm_regiao`"
+                      "name": "monthly(dt_referencia)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `dt_referencia`)"
+                    },
+                    {
+                      "name": "sum(qt_adicionados)",
+                      "expression": "SUM(`qt_adicionados`)"
                     },
                     {
                       "name": "nm_grupo",
                       "expression": "`nm_grupo`"
-                    },
-                    {
-                      "name": "yoy_growth_rate",
-                      "expression": "`yoy_growth_rate`"
                     }
                   ],
-                  "disaggregated": true
+                  "disaggregated": false
                 }
               }
             ],
@@ -761,31 +1103,142 @@
               "widgetType": "bar",
               "encodings": {
                 "x": {
+                  "fieldName": "monthly(dt_referencia)",
+                  "displayName": "Mês",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(qt_adicionados)",
+                  "displayName": "Veículos adicionados",
+                  "format": {
+                    "type": "number",
+                    "abbreviation": "compact",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 1
+                    }
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "color": {
+                  "fieldName": "nm_grupo",
+                  "displayName": "Grupo",
+                  "scale": {
+                    "type": "categorical",
+                    "mappings": [
+                      {
+                        "value": "Elétrico Puro",
+                        "color": "#009E73"
+                      },
+                      {
+                        "value": "Híbrido",
+                        "color": "#56B4E9"
+                      },
+                      {
+                        "value": "Flex",
+                        "color": "#E69F00"
+                      },
+                      {
+                        "value": "Combustão Fóssil",
+                        "color": "#5F6B73"
+                      },
+                      {
+                        "value": "Combustão Renovável",
+                        "color": "#CC79A7"
+                      },
+                      {
+                        "value": "Não Identificado",
+                        "color": "#C9CED2"
+                      }
+                    ]
+                  }
+                }
+              },
+              "frame": {
+                "title": "Eletrificados Adicionados por Mês",
+                "showTitle": true,
+                "description": "Crescimento líquido da frota no mês",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "el-yoy-heatmap",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_yoy_atual",
+                  "fields": [
+                    {
+                      "name": "nm_grupo",
+                      "expression": "`nm_grupo`"
+                    },
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    },
+                    {
+                      "name": "sum(crescimento_yoy)",
+                      "expression": "SUM(`crescimento_yoy`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "heatmap",
+              "encodings": {
+                "x": {
+                  "fieldName": "nm_grupo",
+                  "displayName": "Grupo",
+                  "scale": {
+                    "type": "categorical"
+                  },
+                  "axis": {
+                    "hideTitle": true
+                  }
+                },
+                "y": {
                   "fieldName": "nm_regiao",
                   "displayName": "Região",
                   "scale": {
                     "type": "categorical"
+                  },
+                  "axis": {
+                    "hideTitle": true
                   }
                 },
-                "y": {
-                  "fieldName": "yoy_growth_rate",
-                  "displayName": "Crescimento YoY (%)",
-                  "scale": {
-                    "type": "quantitative"
-                  },
+                "color": {
+                  "fieldName": "sum(crescimento_yoy)",
+                  "displayName": "Crescimento YoY",
                   "format": {
                     "type": "number-percent",
                     "decimalPlaces": {
                       "type": "max",
                       "places": 1
                     }
-                  }
-                },
-                "color": {
-                  "fieldName": "nm_grupo",
-                  "displayName": "Grupo de Combustível",
+                  },
                   "scale": {
-                    "type": "categorical"
+                    "type": "quantitative",
+                    "colorRamp": {
+                      "mode": "scheme",
+                      "scheme": "viridis"
+                    }
                   }
                 },
                 "label": {
@@ -793,31 +1246,124 @@
                 }
               },
               "frame": {
-                "title": "Crescimento Anual (YoY) por Combustível e Região (Último Período)",
-                "showTitle": true
+                "title": "Crescimento YoY por Região e Grupo (Último Mês)",
+                "showTitle": true,
+                "description": "Mesmo mês do ano anterior",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 11,
+            "width": 6,
+            "height": 6
+          }
+        }
+      ]
+    },
+    {
+      "name": "geografia",
+      "displayName": "Estados e Municípios",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "geo-header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 🗺️ Estados e Municípios\n",
+                "\n",
+                "Último mês disponível. Penetração = eletrificados / frota total; o ranking de municípios por penetração considera só quem tem frota de pelo menos 10 mil veículos."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "geo-penetracao-uf",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_kpi_atual",
+                  "fields": [
+                    {
+                      "name": "measure(penetracao)",
+                      "expression": "MEASURE(`penetracao`)"
+                    },
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "measure(penetracao)",
+                  "displayName": "Penetração",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                },
+                "y": {
+                  "fieldName": "sigla_uf",
+                  "displayName": "UF",
+                  "scale": {
+                    "type": "categorical",
+                    "sort": {
+                      "by": "value"
+                    }
+                  }
+                },
+                "label": {
+                  "show": true
+                }
+              },
+              "frame": {
+                "title": "Taxa de Eletrificação por UF",
+                "showTitle": true,
+                "description": "ND = UF não identificada no registro da SENATRAN",
+                "showDescription": true
               }
             }
           },
           "position": {
             "x": 0,
-            "y": 15,
-            "width": 12,
-            "height": 6
+            "y": 2,
+            "width": 5,
+            "height": 11
           }
         },
         {
           "widget": {
-            "name": "table-top-municipios",
+            "name": "geo-tabela-uf",
             "queries": [
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "ds_top_municipios",
+                  "datasetName": "ds_kpi_atual",
                   "fields": [
-                    {
-                      "name": "nm_municipio",
-                      "expression": "`nm_municipio`"
-                    },
                     {
                       "name": "sigla_uf",
                       "expression": "`sigla_uf`"
@@ -827,8 +1373,20 @@
                       "expression": "`nm_regiao`"
                     },
                     {
-                      "name": "total_frota",
-                      "expression": "`total_frota`"
+                      "name": "qt_total",
+                      "expression": "`qt_total`"
+                    },
+                    {
+                      "name": "qt_eletrico",
+                      "expression": "`qt_eletrico`"
+                    },
+                    {
+                      "name": "qt_hibrido",
+                      "expression": "`qt_hibrido`"
+                    },
+                    {
+                      "name": "pct_penetracao",
+                      "expression": "`pct_penetracao`"
                     }
                   ],
                   "disaggregated": true
@@ -841,10 +1399,6 @@
               "encodings": {
                 "columns": [
                   {
-                    "fieldName": "nm_municipio",
-                    "displayName": "Município"
-                  },
-                  {
                     "fieldName": "sigla_uf",
                     "displayName": "UF"
                   },
@@ -853,8 +1407,8 @@
                     "displayName": "Região"
                   },
                   {
-                    "fieldName": "total_frota",
-                    "displayName": "Total da Frota",
+                    "fieldName": "qt_total",
+                    "displayName": "Frota",
                     "format": {
                       "type": "number",
                       "decimalPlaces": {
@@ -862,42 +1416,517 @@
                         "places": 0
                       }
                     }
+                  },
+                  {
+                    "fieldName": "qt_eletrico",
+                    "displayName": "Elétricos puros",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "qt_hibrido",
+                    "displayName": "Híbridos",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "pct_penetracao",
+                    "displayName": "Penetração",
+                    "format": {
+                      "type": "number-percent",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 2
+                      }
+                    }
                   }
                 ]
               },
               "frame": {
-                "title": "Top 10 Municípios com Maior Frota (Último Mês)",
+                "title": "Eletrificação por UF",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 5,
+            "y": 2,
+            "width": 7,
+            "height": 11
+          }
+        },
+        {
+          "widget": {
+            "name": "geo-municipios-frota",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_municipios_frota",
+                  "fields": [
+                    {
+                      "name": "rank_frota",
+                      "expression": "`rank_frota`"
+                    },
+                    {
+                      "name": "nm_municipio",
+                      "expression": "`nm_municipio`"
+                    },
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    },
+                    {
+                      "name": "qt_total",
+                      "expression": "`qt_total`"
+                    },
+                    {
+                      "name": "qt_eletrificados",
+                      "expression": "`qt_eletrificados`"
+                    },
+                    {
+                      "name": "pct_penetracao",
+                      "expression": "`pct_penetracao`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "rank_frota",
+                    "displayName": "#"
+                  },
+                  {
+                    "fieldName": "nm_municipio",
+                    "displayName": "Município"
+                  },
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF"
+                  },
+                  {
+                    "fieldName": "qt_total",
+                    "displayName": "Frota",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "qt_eletrificados",
+                    "displayName": "Eletrificados",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "pct_penetracao",
+                    "displayName": "Penetração",
+                    "format": {
+                      "type": "number-percent",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Municípios com Maior Frota",
                 "showTitle": true
               }
             }
           },
           "position": {
             "x": 0,
-            "y": 21,
+            "y": 13,
+            "width": 6,
+            "height": 8
+          }
+        },
+        {
+          "widget": {
+            "name": "geo-municipios-penetracao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_municipios_penetracao",
+                  "fields": [
+                    {
+                      "name": "rank_penetracao",
+                      "expression": "`rank_penetracao`"
+                    },
+                    {
+                      "name": "nm_municipio",
+                      "expression": "`nm_municipio`"
+                    },
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    },
+                    {
+                      "name": "qt_total",
+                      "expression": "`qt_total`"
+                    },
+                    {
+                      "name": "qt_eletrificados",
+                      "expression": "`qt_eletrificados`"
+                    },
+                    {
+                      "name": "pct_penetracao",
+                      "expression": "`pct_penetracao`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "rank_penetracao",
+                    "displayName": "#"
+                  },
+                  {
+                    "fieldName": "nm_municipio",
+                    "displayName": "Município"
+                  },
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF"
+                  },
+                  {
+                    "fieldName": "qt_total",
+                    "displayName": "Frota",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "qt_eletrificados",
+                    "displayName": "Eletrificados",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "pct_penetracao",
+                    "displayName": "Penetração",
+                    "format": {
+                      "type": "number-percent",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 2
+                      }
+                    }
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Municípios com Maior Taxa de Eletrificação",
+                "showTitle": true,
+                "description": "Frota mínima de 10 mil veículos",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 6,
+            "y": 13,
+            "width": 6,
+            "height": 8
+          }
+        }
+      ]
+    },
+    {
+      "name": "qualidade",
+      "displayName": "Qualidade de Dados",
+      "pageType": "PAGE_TYPE_CANVAS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "dq-header",
+            "multilineTextboxSpec": {
+              "lines": [
+                "## 🔎 Qualidade de Dados\n",
+                "\n",
+                "Monitoramento da ingestão: variação mensal, lotes (arquivos) por mês, linhas em quarentena, combustível não identificado e grafias sem mapeamento."
+              ]
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 12,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "dq-kpi-quarentena",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_quarentena",
+                  "fields": [
+                    {
+                      "name": "sum(qt_linhas)",
+                      "expression": "SUM(`qt_linhas`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(qt_linhas)",
+                  "displayName": "Linhas",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "title": "Linhas em Quarentena",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "dq-kpi-duplicados",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_qualidade_mensal",
+                  "fields": [
+                    {
+                      "name": "sum(qt_periodo_duplicado)",
+                      "expression": "SUM(`qt_periodo_duplicado`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "sum(qt_periodo_duplicado)",
+                  "displayName": "Meses",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "title": "Meses com Mais de um Lote",
+                "showTitle": true,
+                "description": "A fato usa só o lote mais recente",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 4,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "dq-kpi-pendencias",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_pendencias",
+                  "fields": [
+                    {
+                      "name": "count(item)",
+                      "expression": "COUNT(`item`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "counter",
+              "encodings": {
+                "value": {
+                  "fieldName": "count(item)",
+                  "displayName": "Pendências",
+                  "format": {
+                    "type": "number",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 0
+                    }
+                  }
+                }
+              },
+              "frame": {
+                "title": "Pendências de Mapeamento",
+                "showTitle": true,
+                "description": "Municípios sem IBGE + combustíveis sem grupo",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 8,
+            "y": 2,
+            "width": 4,
+            "height": 3
+          }
+        },
+        {
+          "widget": {
+            "name": "dq-variacao",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_qualidade_mensal",
+                  "fields": [
+                    {
+                      "name": "monthly(dt_referencia)",
+                      "expression": "DATE_TRUNC(\"MONTH\", `dt_referencia`)"
+                    },
+                    {
+                      "name": "sum(variacao)",
+                      "expression": "SUM(`variacao`)"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 3,
+              "widgetType": "bar",
+              "encodings": {
+                "x": {
+                  "fieldName": "monthly(dt_referencia)",
+                  "displayName": "Mês",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "fieldName": "sum(variacao)",
+                  "displayName": "Variação vs. mês anterior",
+                  "format": {
+                    "type": "number-percent",
+                    "decimalPlaces": {
+                      "type": "max",
+                      "places": 2
+                    }
+                  },
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "title": "Variação Mensal da Frota Total",
+                "showTitle": true,
+                "description": "Alerta acima de ±5%",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 5,
             "width": 6,
             "height": 6
           }
         },
         {
           "widget": {
-            "name": "table-qualidade-dados",
+            "name": "dq-nao-identificado-uf",
             "queries": [
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "ds_qualidade_dados",
+                  "datasetName": "ds_qualidade_uf",
                   "fields": [
                     {
                       "name": "sigla_uf",
                       "expression": "`sigla_uf`"
                     },
                     {
-                      "name": "nm_uf",
-                      "expression": "`nm_uf`"
-                    },
-                    {
                       "name": "qt_total",
                       "expression": "`qt_total`"
+                    },
+                    {
+                      "name": "qt_nao_identificado",
+                      "expression": "`qt_nao_identificado`"
                     },
                     {
                       "name": "pct_nao_identificado",
@@ -918,12 +1947,19 @@
                     "displayName": "UF"
                   },
                   {
-                    "fieldName": "nm_uf",
-                    "displayName": "Estado"
+                    "fieldName": "qt_total",
+                    "displayName": "Frota",
+                    "format": {
+                      "type": "number",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 0
+                      }
+                    }
                   },
                   {
-                    "fieldName": "qt_total",
-                    "displayName": "Frota Total",
+                    "fieldName": "qt_nao_identificado",
+                    "displayName": "Combustível não identificado",
                     "format": {
                       "type": "number",
                       "decimalPlaces": {
@@ -934,7 +1970,7 @@
                   },
                   {
                     "fieldName": "pct_nao_identificado",
-                    "displayName": "% Não Identificado",
+                    "displayName": "%",
                     "format": {
                       "type": "number-percent",
                       "decimalPlaces": {
@@ -946,118 +1982,58 @@
                 ]
               },
               "frame": {
-                "title": "Qualidade dos Dados por Estado (% Não Identificado)",
+                "title": "Combustível Não Identificado por UF (Último Mês)",
                 "showTitle": true
               }
             }
           },
           "position": {
             "x": 6,
-            "y": 21,
+            "y": 5,
             "width": 6,
             "height": 6
           }
         },
         {
           "widget": {
-            "name": "chart-ev-growth-regional",
+            "name": "dq-volume-mensal",
             "queries": [
               {
                 "name": "main_query",
                 "query": {
-                  "datasetName": "ds_ev_growth_by_region",
+                  "datasetName": "ds_qualidade_mensal",
                   "fields": [
                     {
-                      "name": "nm_regiao",
-                      "expression": "`nm_regiao`"
+                      "name": "dt_referencia",
+                      "expression": "`dt_referencia`"
                     },
                     {
-                      "name": "growth_rate",
-                      "expression": "`growth_rate`"
-                    }
-                  ],
-                  "disaggregated": true
-                }
-              }
-            ],
-            "spec": {
-              "version": 3,
-              "widgetType": "bar",
-              "encodings": {
-                "x": {
-                  "fieldName": "nm_regiao",
-                  "displayName": "Região",
-                  "scale": {
-                    "type": "categorical"
-                  }
-                },
-                "y": {
-                  "fieldName": "growth_rate",
-                  "displayName": "Taxa de Crescimento Acumulado",
-                  "scale": {
-                    "type": "quantitative"
-                  },
-                  "format": {
-                    "type": "number-percent",
-                    "decimalPlaces": {
-                      "type": "max",
-                      "places": 1
-                    }
-                  }
-                },
-                "label": {
-                  "show": true
-                }
-              },
-              "frame": {
-                "title": "Crescimento Acumulado da Frota Elétrica e Híbrida por Região (Primeiro vs. Último Mês)",
-                "showTitle": true
-              }
-            }
-          },
-          "position": {
-            "x": 0,
-            "y": 27,
-            "width": 6,
-            "height": 6
-          }
-        },
-        {
-          "widget": {
-            "name": "table-ranking-estados-ev",
-            "queries": [
-              {
-                "name": "main_query",
-                "query": {
-                  "datasetName": "ds_ranking_estados_ev",
-                  "fields": [
-                    {
-                      "name": "rank_nacional",
-                      "expression": "`rank_nacional`"
+                      "name": "total_veiculos",
+                      "expression": "`total_veiculos`"
                     },
                     {
-                      "name": "sigla_uf",
-                      "expression": "`sigla_uf`"
+                      "name": "variacao",
+                      "expression": "`variacao`"
                     },
                     {
-                      "name": "nm_uf",
-                      "expression": "`nm_uf`"
+                      "name": "anomalia_volume",
+                      "expression": "`anomalia_volume`"
                     },
                     {
-                      "name": "nm_regiao",
-                      "expression": "`nm_regiao`"
+                      "name": "qt_lotes",
+                      "expression": "`qt_lotes`"
                     },
                     {
-                      "name": "veiculos_eletricos_puros",
-                      "expression": "`veiculos_eletricos_puros`"
+                      "name": "qt_linhas_rejeitadas",
+                      "expression": "`qt_linhas_rejeitadas`"
                     },
                     {
-                      "name": "veiculos_hibridos",
-                      "expression": "`veiculos_hibridos`"
+                      "name": "nm_arquivo_vigente",
+                      "expression": "`nm_arquivo_vigente`"
                     },
                     {
-                      "name": "total_eletricos_hibridos",
-                      "expression": "`total_eletricos_hibridos`"
+                      "name": "nm_arquivos_fonte",
+                      "expression": "`nm_arquivos_fonte`"
                     }
                   ],
                   "disaggregated": true
@@ -1070,24 +2046,12 @@
               "encodings": {
                 "columns": [
                   {
-                    "fieldName": "rank_nacional",
-                    "displayName": "Posição"
+                    "fieldName": "dt_referencia",
+                    "displayName": "Mês"
                   },
                   {
-                    "fieldName": "sigla_uf",
-                    "displayName": "UF"
-                  },
-                  {
-                    "fieldName": "nm_uf",
-                    "displayName": "Estado"
-                  },
-                  {
-                    "fieldName": "nm_regiao",
-                    "displayName": "Região"
-                  },
-                  {
-                    "fieldName": "veiculos_eletricos_puros",
-                    "displayName": "Elétricos Puros",
+                    "fieldName": "total_veiculos",
+                    "displayName": "Frota (lote vigente)",
                     "format": {
                       "type": "number",
                       "decimalPlaces": {
@@ -1097,8 +2061,97 @@
                     }
                   },
                   {
-                    "fieldName": "veiculos_hibridos",
-                    "displayName": "Híbridos",
+                    "fieldName": "variacao",
+                    "displayName": "Variação",
+                    "format": {
+                      "type": "number-percent",
+                      "decimalPlaces": {
+                        "type": "max",
+                        "places": 2
+                      }
+                    }
+                  },
+                  {
+                    "fieldName": "anomalia_volume",
+                    "displayName": "Anomalia"
+                  },
+                  {
+                    "fieldName": "qt_lotes",
+                    "displayName": "Lotes"
+                  },
+                  {
+                    "fieldName": "qt_linhas_rejeitadas",
+                    "displayName": "Linhas rejeitadas"
+                  },
+                  {
+                    "fieldName": "nm_arquivo_vigente",
+                    "displayName": "Arquivo vigente"
+                  },
+                  {
+                    "fieldName": "nm_arquivos_fonte",
+                    "displayName": "Arquivos na bronze"
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Volume Mensal e Lotes",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 11,
+            "width": 12,
+            "height": 7
+          }
+        },
+        {
+          "widget": {
+            "name": "dq-quarentena",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_quarentena",
+                  "fields": [
+                    {
+                      "name": "nm_arquivo_fonte",
+                      "expression": "`nm_arquivo_fonte`"
+                    },
+                    {
+                      "name": "motivo_rejeicao",
+                      "expression": "`motivo_rejeicao`"
+                    },
+                    {
+                      "name": "qt_linhas",
+                      "expression": "`qt_linhas`"
+                    },
+                    {
+                      "name": "qt_veiculos",
+                      "expression": "`qt_veiculos`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "nm_arquivo_fonte",
+                    "displayName": "Arquivo"
+                  },
+                  {
+                    "fieldName": "motivo_rejeicao",
+                    "displayName": "Motivo"
+                  },
+                  {
+                    "fieldName": "qt_linhas",
+                    "displayName": "Linhas",
                     "format": {
                       "type": "number",
                       "decimalPlaces": {
@@ -1108,8 +2161,8 @@
                     }
                   },
                   {
-                    "fieldName": "total_eletricos_hibridos",
-                    "displayName": "Total EV + Híbridos",
+                    "fieldName": "qt_veiculos",
+                    "displayName": "Veículos",
                     "format": {
                       "type": "number",
                       "decimalPlaces": {
@@ -1121,19 +2174,591 @@
                 ]
               },
               "frame": {
-                "title": "Ranking de Estados em Frota Elétrica e Híbrida (Último Mês)",
+                "title": "Quarentena por Arquivo e Motivo",
                 "showTitle": true
               }
             }
           },
           "position": {
+            "x": 0,
+            "y": 18,
+            "width": 6,
+            "height": 6
+          }
+        },
+        {
+          "widget": {
+            "name": "dq-pendencias",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "ds_pendencias",
+                  "fields": [
+                    {
+                      "name": "tipo",
+                      "expression": "`tipo`"
+                    },
+                    {
+                      "name": "item",
+                      "expression": "`item`"
+                    }
+                  ],
+                  "disaggregated": true
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "table",
+              "encodings": {
+                "columns": [
+                  {
+                    "fieldName": "tipo",
+                    "displayName": "Tipo"
+                  },
+                  {
+                    "fieldName": "item",
+                    "displayName": "Item"
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Pendências de Mapeamento",
+                "showTitle": true,
+                "description": "Corrija nos seeds em databricks/src/seeds",
+                "showDescription": true
+              }
+            }
+          },
+          "position": {
             "x": 6,
-            "y": 27,
+            "y": 18,
             "width": 6,
             "height": 6
           }
         }
       ]
+    },
+    {
+      "name": "filtros",
+      "displayName": "Filtros",
+      "pageType": "PAGE_TYPE_GLOBAL_FILTERS",
+      "layoutVersion": "GRID_V1",
+      "layout": [
+        {
+          "widget": {
+            "name": "filtro-periodo",
+            "queries": [
+              {
+                "name": "filtro-periodo_ds_uf_mensal",
+                "query": {
+                  "datasetName": "ds_uf_mensal",
+                  "fields": [
+                    {
+                      "name": "dt_referencia",
+                      "expression": "`dt_referencia`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-periodo_ds_grupo_mensal",
+                "query": {
+                  "datasetName": "ds_grupo_mensal",
+                  "fields": [
+                    {
+                      "name": "dt_referencia",
+                      "expression": "`dt_referencia`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-periodo_ds_adicionados",
+                "query": {
+                  "datasetName": "ds_adicionados",
+                  "fields": [
+                    {
+                      "name": "dt_referencia",
+                      "expression": "`dt_referencia`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-periodo_ds_qualidade_mensal",
+                "query": {
+                  "datasetName": "ds_qualidade_mensal",
+                  "fields": [
+                    {
+                      "name": "dt_referencia",
+                      "expression": "`dt_referencia`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-date-range-picker",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "dt_referencia",
+                    "displayName": "Período",
+                    "queryName": "filtro-periodo_ds_uf_mensal"
+                  },
+                  {
+                    "fieldName": "dt_referencia",
+                    "displayName": "Período",
+                    "queryName": "filtro-periodo_ds_grupo_mensal"
+                  },
+                  {
+                    "fieldName": "dt_referencia",
+                    "displayName": "Período",
+                    "queryName": "filtro-periodo_ds_adicionados"
+                  },
+                  {
+                    "fieldName": "dt_referencia",
+                    "displayName": "Período",
+                    "queryName": "filtro-periodo_ds_qualidade_mensal"
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Período",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 0,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filtro-regiao",
+            "queries": [
+              {
+                "name": "filtro-regiao_ds_kpi_atual",
+                "query": {
+                  "datasetName": "ds_kpi_atual",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-regiao_ds_uf_mensal",
+                "query": {
+                  "datasetName": "ds_uf_mensal",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-regiao_ds_grupo_mensal",
+                "query": {
+                  "datasetName": "ds_grupo_mensal",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-regiao_ds_yoy_atual",
+                "query": {
+                  "datasetName": "ds_yoy_atual",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-regiao_ds_crescimento_regiao",
+                "query": {
+                  "datasetName": "ds_crescimento_regiao",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-regiao_ds_municipios_frota",
+                "query": {
+                  "datasetName": "ds_municipios_frota",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-regiao_ds_municipios_penetracao",
+                "query": {
+                  "datasetName": "ds_municipios_penetracao",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-regiao_ds_qualidade_uf",
+                "query": {
+                  "datasetName": "ds_qualidade_uf",
+                  "fields": [
+                    {
+                      "name": "nm_regiao",
+                      "expression": "`nm_regiao`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "nm_regiao",
+                    "displayName": "Região",
+                    "queryName": "filtro-regiao_ds_kpi_atual"
+                  },
+                  {
+                    "fieldName": "nm_regiao",
+                    "displayName": "Região",
+                    "queryName": "filtro-regiao_ds_uf_mensal"
+                  },
+                  {
+                    "fieldName": "nm_regiao",
+                    "displayName": "Região",
+                    "queryName": "filtro-regiao_ds_grupo_mensal"
+                  },
+                  {
+                    "fieldName": "nm_regiao",
+                    "displayName": "Região",
+                    "queryName": "filtro-regiao_ds_yoy_atual"
+                  },
+                  {
+                    "fieldName": "nm_regiao",
+                    "displayName": "Região",
+                    "queryName": "filtro-regiao_ds_crescimento_regiao"
+                  },
+                  {
+                    "fieldName": "nm_regiao",
+                    "displayName": "Região",
+                    "queryName": "filtro-regiao_ds_municipios_frota"
+                  },
+                  {
+                    "fieldName": "nm_regiao",
+                    "displayName": "Região",
+                    "queryName": "filtro-regiao_ds_municipios_penetracao"
+                  },
+                  {
+                    "fieldName": "nm_regiao",
+                    "displayName": "Região",
+                    "queryName": "filtro-regiao_ds_qualidade_uf"
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Região",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 2,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filtro-uf",
+            "queries": [
+              {
+                "name": "filtro-uf_ds_kpi_atual",
+                "query": {
+                  "datasetName": "ds_kpi_atual",
+                  "fields": [
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-uf_ds_uf_mensal",
+                "query": {
+                  "datasetName": "ds_uf_mensal",
+                  "fields": [
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-uf_ds_grupo_mensal",
+                "query": {
+                  "datasetName": "ds_grupo_mensal",
+                  "fields": [
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-uf_ds_municipios_frota",
+                "query": {
+                  "datasetName": "ds_municipios_frota",
+                  "fields": [
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-uf_ds_municipios_penetracao",
+                "query": {
+                  "datasetName": "ds_municipios_penetracao",
+                  "fields": [
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-uf_ds_qualidade_uf",
+                "query": {
+                  "datasetName": "ds_qualidade_uf",
+                  "fields": [
+                    {
+                      "name": "sigla_uf",
+                      "expression": "`sigla_uf`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF",
+                    "queryName": "filtro-uf_ds_kpi_atual"
+                  },
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF",
+                    "queryName": "filtro-uf_ds_uf_mensal"
+                  },
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF",
+                    "queryName": "filtro-uf_ds_grupo_mensal"
+                  },
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF",
+                    "queryName": "filtro-uf_ds_municipios_frota"
+                  },
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF",
+                    "queryName": "filtro-uf_ds_municipios_penetracao"
+                  },
+                  {
+                    "fieldName": "sigla_uf",
+                    "displayName": "UF",
+                    "queryName": "filtro-uf_ds_qualidade_uf"
+                  }
+                ]
+              },
+              "frame": {
+                "title": "UF",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 4,
+            "width": 3,
+            "height": 2
+          }
+        },
+        {
+          "widget": {
+            "name": "filtro-grupo",
+            "queries": [
+              {
+                "name": "filtro-grupo_ds_grupo_mensal",
+                "query": {
+                  "datasetName": "ds_grupo_mensal",
+                  "fields": [
+                    {
+                      "name": "nm_grupo",
+                      "expression": "`nm_grupo`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-grupo_ds_adicionados",
+                "query": {
+                  "datasetName": "ds_adicionados",
+                  "fields": [
+                    {
+                      "name": "nm_grupo",
+                      "expression": "`nm_grupo`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              },
+              {
+                "name": "filtro-grupo_ds_yoy_atual",
+                "query": {
+                  "datasetName": "ds_yoy_atual",
+                  "fields": [
+                    {
+                      "name": "nm_grupo",
+                      "expression": "`nm_grupo`"
+                    }
+                  ],
+                  "disaggregated": false
+                }
+              }
+            ],
+            "spec": {
+              "version": 2,
+              "widgetType": "filter-multi-select",
+              "encodings": {
+                "fields": [
+                  {
+                    "fieldName": "nm_grupo",
+                    "displayName": "Grupo de combustível",
+                    "queryName": "filtro-grupo_ds_grupo_mensal"
+                  },
+                  {
+                    "fieldName": "nm_grupo",
+                    "displayName": "Grupo de combustível",
+                    "queryName": "filtro-grupo_ds_adicionados"
+                  },
+                  {
+                    "fieldName": "nm_grupo",
+                    "displayName": "Grupo de combustível",
+                    "queryName": "filtro-grupo_ds_yoy_atual"
+                  }
+                ]
+              },
+              "frame": {
+                "title": "Grupo de combustível",
+                "showTitle": true
+              }
+            }
+          },
+          "position": {
+            "x": 0,
+            "y": 6,
+            "width": 3,
+            "height": 2
+          }
+        }
+      ]
     }
-  ]
+  ],
+  "uiSettings": {
+    "theme": {
+      "canvasBackgroundColor": {
+        "light": "#F7F8FA",
+        "dark": "#1F272D"
+      },
+      "widgetBackgroundColor": {
+        "light": "#FFFFFF",
+        "dark": "#11171C"
+      },
+      "widgetBorderColor": {
+        "light": "#FFFFFF",
+        "dark": "#11171C"
+      },
+      "fontColor": {
+        "light": "#11171C",
+        "dark": "#E8ECF0"
+      },
+      "selectionColor": {
+        "light": "#2272B4",
+        "dark": "#8ACAFF"
+      },
+      "visualizationColors": [
+        "#0072B2",
+        "#E69F00",
+        "#009E73",
+        "#CC79A7",
+        "#56B4E9",
+        "#D55E00",
+        "#5F6B73"
+      ],
+      "widgetHeaderAlignment": "LEFT"
+    }
+  }
 }

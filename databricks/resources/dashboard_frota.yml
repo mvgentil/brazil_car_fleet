@@ -4,5 +4,7 @@ resources:
       display_name: Brazil Car Fleet Dashboard
       file_path: ../src/dashboard/brazil_car_fleet.lvdash.json
       warehouse_id: ${var.sql_warehouse_id}
-      # Os datasets usam nomes schema.tabela; o catálogo vem do target (dev/prod)
+      # Os datasets usam nomes de tabela sem catálogo (gold por padrão; bronze.x quando necessário);
+      # catálogo e schema vêm do target (dev/prod)
       dataset_catalog: ${var.catalog}
+      dataset_schema: ${var.gold_schema}
